@@ -7,7 +7,7 @@ use crate::suitable_data_type::SuitableDataType;
 
 const CH_CHECK_SEQUENCE: u32 = 0x32af8429;
 impl<T: SuitableDataType> BytesSerialize for ChunkHeader<T> where T: BytesSerialize {
-    fn serialize<W: Write>(&self, w: &mut W)  {
+    fn serialize<W: Write>(&self, mut w: W)  {
         w.write(&CH_CHECK_SEQUENCE.to_le_bytes());
         w.write(&self.type_size.to_le_bytes());
         w.write(&self.length.to_le_bytes());

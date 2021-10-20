@@ -7,6 +7,7 @@ use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, IoSlice, Read, Seek, SeekFrom, Write};
 
 use rand::Rng;
+use std::ops::Range as stdRange;
 
 use chunk_header::ChunkHeader;
 use suitable_data_type::SuitableDataType;
@@ -32,7 +33,7 @@ fn setup_logging() {
 
 const CHECK_BYTES: u64 = 0x8e3ea4b6d509c660;
 
-#[derive(Clone )]
+#[derive(Clone)]
 pub struct Range<T> {
     min: Option<T>,
     max: Option<T>,
@@ -63,9 +64,9 @@ impl<T: Ord + Clone> Range<T> {
 const CHECK_SEQUENCE: u8 = 98;
 
 impl<T: SuitableDataType> BytesSerialize for Range<T> {
-    fn serialize<W: Write>(&self, w: &mut W) {
+    fn serialize<W: Write>(&self, mut w: W) {
         w.write(&CHECK_SEQUENCE.to_le_bytes());
-        self.min.as_ref().unwrap().serialize(w);
+        self.min.as_ref().unwrap().serialize(&mut w);
         self.max.as_ref().unwrap().serialize(w);
     }
 }
@@ -81,30 +82,23 @@ impl<T: SuitableDataType> FromReader for Range<T> {
     }
 }
 
+
 impl<T: SuitableDataType> Range<T> {
-    pub fn overlaps<RB: RangeBounds<u64>>(&self, rb: RB) -> bool {
+    pub fn overlaps<RB: RangeBounds<u64>>(&self, rb: &RB) -> bool {
         match (&self.min, &self.max) {
             (Some(min), Some(max)) => {
                 let min_in = match rb.start_bound() {
-                    Bound::Included(x) => min >= x,
-                    Bound::Excluded(x) => min > x,
-                    Bound::Unbounded => true
-                } && match rb.end_bound() {
-                    Bound::Included(x) => min <= x,
-                    Bound::Excluded(x) => min < x,
+                    Bound::Included(start) => max >= start,
+                    Bound::Excluded(start) => max > start,
                     Bound::Unbounded => true
                 };
-                let max_in = match rb.start_bound() {
-                    Bound::Included(x) => max >= x,
-                    Bound::Excluded(x) => max > x,
-                    Bound::Unbounded => true
-                } && match rb.end_bound() {
-                    Bound::Included(x) => max <= x,
-                    Bound::Excluded(x) => max < x,
+                let max_in = match rb.end_bound() {
+                    Bound::Included(end) => min <= end,
+                    Bound::Excluded(end) => min < end,
                     Bound::Unbounded => true
                 };
 
-                max_in || min_in
+                max_in && min_in
             }
             _ => panic!("Must not be None to compare")
         }
@@ -114,8 +108,8 @@ impl<T: SuitableDataType> Range<T> {
 #[test]
 fn test_range() {
     let test_range = Range { min: Some(DataType(3, 3, 3)), max: Some(DataType(10, 10, 10)) };
-    assert!(!test_range.overlaps(15..20));
-    assert!(test_range.overlaps(7..20));
+    assert!(!test_range.overlaps(&(15..20)));
+    assert!(test_range.overlaps(&(7..20)));
 }
 
 
@@ -135,36 +129,68 @@ const FLUSH_CUTOFF: usize = 5;
 
 struct DbManager<T: SuitableDataType> {
     db: DbBase<T>,
-    previous_headers: Vec<ChunkHeader<T>>,
+    previous_headers: Vec<(usize, ChunkHeader<T>)>,
     output_stream: Vec<u8>,
+    counter: u64,
 }
 
 impl<T: SuitableDataType> DbManager<T> {
     fn new(db: DbBase<T>) -> Self {
-        Self { db, previous_headers: Vec::default(), output_stream: Vec::default() }
+        Self { db, previous_headers: Vec::default(), output_stream: Vec::default(), counter: 0 }
     }
     fn store(&mut self, t: T) {
         self.db.store(t);
 
-        if self.db.len() > FLUSH_CUTOFF {
+        self.counter += 1;
+        if self.db.len() >= FLUSH_CUTOFF {
             let header = self.db.get_chunk_header();
-            self.previous_headers.push(header);
+            self.previous_headers.push((self.output_stream.len(), header));
             self.db.force_flush(&mut self.output_stream);
+
+            assert_eq!(self.previous_headers.len() * FLUSH_CUTOFF, self.counter as usize);
         }
-        log::info!("Flushed tuples");
     }
     fn get_in_current<I>(&self, range: I) -> I::Output where I: SliceIndex<[T]>, <I as SliceIndex<[T]>>::Output: Sized + Clone {
         self.db.data.get(range).unwrap().clone()
     }
 
-    // fn get_in_all(&self, range: RB) -> &[T] {
-        // let ok_chunks = self.previous_headers.iter().filter(|h| h.)
-        // todo!()
-    // }
+    fn get_in_all<RB: RangeBounds<u64>>(&self, range: RB) -> Vec<T> {
+        let ok_chunks = self.previous_headers.iter().filter_map(|(pos, h)|
+            h.limits.overlaps(&range).then(|| pos));
+
+        let mut vec = Vec::new();
+        for pos in ok_chunks {
+            let slice = &self.output_stream[*pos..];
+            let db = DbBase::<T>::from_reader(slice);
+            let range = db.key_range(&range);
+            vec.extend_from_slice(range);
+        };
+
+        vec
+    }
 }
 
 #[test]
-fn test_dbmanager() {}
+fn test_dbmanager() {
+    let mut dbm: DbManager<DataType> = DbManager::new(DbBase::default());
+    let range: stdRange<u64> = 200..250;
+    let mut expecting = Vec::new();
+    for i in 0..255 {
+        let rand = i as u64;
+        let rand = (rand * rand * rand + 103238) % 255;
+        let rand = rand as u8;
+        dbm.store(DataType(rand, i, i));
+
+        if range.contains(&(rand as u64)) {
+            expecting.push(DataType(rand, i, i));
+        }
+    }
+
+    let mut res = dbm.get_in_all(range.clone());
+    res.sort();
+    expecting.sort();
+    assert_eq!(res, expecting);
+}
 
 struct DbBase<T> {
     data: Vec<T>,
@@ -187,6 +213,13 @@ impl<T: SuitableDataType> Debug for DbBase<T> {
             .field("data", &self.data)
             .field("limits", &self.limits)
             .finish()
+    }
+}
+
+fn ord_range<Data: PartialOrd<Int>, Int>(b: Bound<Int>, data: &Data, default: Ordering) -> Ordering {
+    match b {
+        Bound::Included(x) | Bound::Excluded(x) => data.partial_cmp(&x).unwrap(),
+        Bound::Unbounded => default
     }
 }
 
@@ -219,19 +252,21 @@ impl<T: SuitableDataType> DbBase<T> {
         ChunkHeader::<T> {
             type_size: std::mem::size_of::<T>() as u32,
             length: self.data.len() as u32,
-            limits: self.limits.clone()
+            limits: self.limits.clone(),
         }
     }
-    fn force_flush(&mut self, w: &mut impl Write) -> Vec<T> {
+    fn force_flush(&mut self, mut w: impl Write) -> Vec<T> {
         if self.data.is_empty() {
             return Vec::new();
         }
         let header = self.get_chunk_header();
 
+        self.limits = Range::new(None);
+
         let mut vec = std::mem::replace(&mut self.data, Vec::new());
         vec.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        header.serialize(w);
-        vec.iter().for_each(|a| T::serialize(a, w));
+        header.serialize(&mut w);
+        vec.iter().for_each(|a| T::serialize(a, &mut w));
         vec
     }
 
@@ -242,7 +277,7 @@ impl<T: SuitableDataType> DbBase<T> {
         result.map(|index| self.data[index].clone()).ok()
     }
 
-    fn key_range(&self, range: (u64, u64)) -> &[T] {
+    fn key_range<RB: RangeBounds<u64>>(&self, range: &RB) -> &[T] {
         assert!(self.data.is_sorted());
         let result_extractor = |a: Result<usize, usize>| -> usize {
             match a {
@@ -251,8 +286,12 @@ impl<T: SuitableDataType> DbBase<T> {
             }
         };
 
-        let start_idx = self.data.binary_search_by(|a| a.partial_cmp(&range.0).unwrap());
-        let end_idx = self.data.binary_search_by(|a| a.partial_cmp(&range.1).unwrap());
+
+        let start_idx = self.data.binary_search_by(|a|
+            ord_range(range.start_bound().cloned(), a, Ordering::Greater));
+        let end_idx = self.data.binary_search_by(|a|
+            ord_range(range.end_bound().cloned(), a, Ordering::Less)
+        );
 
         let start_idx = result_extractor(start_idx);
         let end_idx = result_extractor(end_idx);
@@ -274,7 +313,7 @@ fn test_key_lookup() {
     }
 
     dbg!(db.key_lookup(8));
-    dbg!(db.key_range((2, 30)));
+    dbg!(db.key_range(&(2..30)));
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ pub trait FromReader {
 }
 
 pub trait BytesSerialize: Sized {
-    fn serialize<W: Write>(&self, w: &mut W) {
+    fn serialize<W: Write>(&self, mut w:  W) {
         let bytes = unsafe {
             std::slice::from_raw_parts(self as *const Self as *const u8, std::mem::size_of::<Self>())
         };
