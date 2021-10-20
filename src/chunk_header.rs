@@ -2,36 +2,37 @@ use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, IoSlice, Read, Seek, SeekFrom, Write};
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
-use crate::CHECK_BYTES;
+use crate::{CHECK_BYTES, Range};
 use crate::suitable_data_type::SuitableDataType;
 
+const CH_CHECK_SEQUENCE: u32 = 0x32af8429;
 impl<T: SuitableDataType> BytesSerialize for ChunkHeader<T> where T: BytesSerialize {
     fn serialize<W: Write>(&self, w: &mut W)  {
-        let my_bytes = IoSlice::new(unsafe {
-            std::slice::from_raw_parts(self as *const Self as *const u8, std::mem::size_of::<Self>())
-        });
-
-        let check_bytes = IoSlice::new(unsafe {
-                std::slice::from_raw_parts(&CHECK_BYTES as *const u64 as *const u8, 8)
-            });
-
-        w.write_all_vectored(&mut [my_bytes, check_bytes]).unwrap();
+        w.write(&CH_CHECK_SEQUENCE.to_le_bytes());
+        w.write(&self.type_size.to_le_bytes());
+        w.write(&self.length.to_le_bytes());
+        self.limits.serialize(w);
     }
+}
+
+fn slice_from_type<T: Sized>(t: &mut T) -> &mut [u8] {
+    unsafe {std::slice::from_raw_parts_mut(t as *mut T as *mut u8, std::mem::size_of::<T>())}
 }
 
 impl<T: SuitableDataType> FromReader for ChunkHeader<T> {
     fn from_reader<R: Read>(r: &mut R) -> Self {
-        let mut buffer: Self = unsafe {std::mem::MaybeUninit::uninit().assume_init()};
-        let mut slice = unsafe {std::slice::from_raw_parts_mut(&mut buffer as *mut Self as *mut u8, std::mem::size_of::<Self>())};
-        r.read_exact(&mut slice).unwrap();
+        let mut check_sequence: u32 = 0;
+        let mut type_size: u32 = 0;
+        let mut length: u32 = 0;
+        r.read_exact(slice_from_type(&mut check_sequence));
+        r.read_exact(slice_from_type(&mut type_size));
+        r.read_exact(slice_from_type(&mut length));
 
-        let mut check_bytes = [0u8;8];
+        assert_eq!(check_sequence, CH_CHECK_SEQUENCE);
 
-        r.read_exact(&mut check_bytes);
+        let limits = Range::from_reader(r);
 
-        assert_eq!(unsafe {std::ptr::read(check_bytes.as_ptr() as *const u64)}, CHECK_BYTES);
-
-        buffer
+        Self {type_size, length, limits}
     }
 }
 
@@ -39,8 +40,7 @@ impl<T: SuitableDataType> FromReader for ChunkHeader<T> {
 pub struct ChunkHeader<T: SuitableDataType> {
     pub type_size: u32,
     pub length: u32,
-    pub start: T,
-    pub end: T,
+    pub limits: Range<T>
 }
 
 #[derive(Debug)]
@@ -75,6 +75,6 @@ impl <T: SuitableDataType> FromReader for ChunkHeaderIndex<T> {
 
 impl<T: SuitableDataType> Debug for ChunkHeader<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("ChunkHeader {{ {}, {}, {:?}, {:?}}}", self.type_size, self.length, self.start, self.end))
+        f.write_fmt(format_args!("ChunkHeader {{ {}, {}, {:?}}}", self.type_size, self.length, self.limits))
     }
 }

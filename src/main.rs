@@ -10,8 +10,14 @@ use rand::Rng;
 
 use chunk_header::ChunkHeader;
 use suitable_data_type::SuitableDataType;
+use log;
+use env_logger;
+use std::ops::{FnOnce, RangeBounds};
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
+use std::slice::SliceIndex;
+use std::collections::Bound;
+use crate::suitable_data_type::DataType;
 
 mod bytes_serializer;
 mod chunk_header;
@@ -19,59 +25,211 @@ mod suitable_data_type;
 
 // todo: implement generations to facilitate editing
 
+fn setup_logging() {
+    env_logger::init();
+}
 
 
 const CHECK_BYTES: u64 = 0x8e3ea4b6d509c660;
 
-#[derive(Debug)]
-struct DB<T> {
-    data: Vec<T>,
-    is_sorted: bool
+#[derive(Clone )]
+pub struct Range<T> {
+    min: Option<T>,
+    max: Option<T>,
 }
 
-
-impl<T> Default for DB<T> {
-    fn default() -> Self {
-        Self { data: Vec::new(), is_sorted: true }
+impl<T: Ord + Clone> Range<T> {
+    fn new(init: Option<T>) -> Self {
+        Self { min: init.clone(), max: init }
+    }
+    // Returns comp(lhs, rhs) if both are defined value, else returns True
+    fn check_else_true<A, F: FnOnce(A, A) -> bool>(lhs: Option<A>, rhs: Option<A>, comp: F) -> bool {
+        match lhs.is_some() && rhs.is_some() {
+            false => true,
+            true => comp(lhs.unwrap(), rhs.unwrap())
+        }
+    }
+    pub fn add(&mut self, new_elt: &T) {
+        if Self::check_else_true(Some(new_elt), self.min.as_ref(), |new, min| new < min) {
+            self.min = Some(new_elt.clone());
+        }
+        if Self::check_else_true(Some(new_elt), self.max.as_ref(), |new, max| new > max) {
+            self.max = Some(new_elt.clone());
+        }
     }
 }
 
-impl<T: PartialEq> PartialEq for DB<T> {
+
+const CHECK_SEQUENCE: u8 = 98;
+
+impl<T: SuitableDataType> BytesSerialize for Range<T> {
+    fn serialize<W: Write>(&self, w: &mut W) {
+        w.write(&CHECK_SEQUENCE.to_le_bytes());
+        self.min.as_ref().unwrap().serialize(w);
+        self.max.as_ref().unwrap().serialize(w);
+    }
+}
+
+impl<T: SuitableDataType> FromReader for Range<T> {
+    fn from_reader<R: Read>(r: &mut R) -> Self {
+        let mut check = [0u8; 1];
+        r.read_exact(&mut check);
+        assert_eq!(check[0], CHECK_SEQUENCE);
+        let min = T::from_reader(r);
+        let max = T::from_reader(r);
+        Self { min: Some(min), max: Some(max) }
+    }
+}
+
+impl<T: SuitableDataType> Range<T> {
+    pub fn overlaps<RB: RangeBounds<u64>>(&self, rb: RB) -> bool {
+        match (&self.min, &self.max) {
+            (Some(min), Some(max)) => {
+                let min_in = match rb.start_bound() {
+                    Bound::Included(x) => min >= x,
+                    Bound::Excluded(x) => min > x,
+                    Bound::Unbounded => true
+                } && match rb.end_bound() {
+                    Bound::Included(x) => min <= x,
+                    Bound::Excluded(x) => min < x,
+                    Bound::Unbounded => true
+                };
+                let max_in = match rb.start_bound() {
+                    Bound::Included(x) => max >= x,
+                    Bound::Excluded(x) => max > x,
+                    Bound::Unbounded => true
+                } && match rb.end_bound() {
+                    Bound::Included(x) => max <= x,
+                    Bound::Excluded(x) => max < x,
+                    Bound::Unbounded => true
+                };
+
+                max_in || min_in
+            }
+            _ => panic!("Must not be None to compare")
+        }
+    }
+}
+
+#[test]
+fn test_range() {
+    let test_range = Range { min: Some(DataType(3, 3, 3)), max: Some(DataType(10, 10, 10)) };
+    assert!(!test_range.overlaps(15..20));
+    assert!(test_range.overlaps(7..20));
+}
+
+
+impl<T: Ord + Clone> Default for DbBase<T> {
+    fn default() -> Self {
+        Self { limits: Range::new(None), data: Vec::new(), is_sorted: true }
+    }
+}
+
+impl<T: PartialEq> PartialEq for DbBase<T> {
     fn eq(&self, other: &Self) -> bool {
         self.data.eq(&other.data)
     }
 }
 
-impl<T: SuitableDataType> DB<T> {
+const FLUSH_CUTOFF: usize = 5;
+
+struct DbManager<T: SuitableDataType> {
+    db: DbBase<T>,
+    previous_headers: Vec<ChunkHeader<T>>,
+    output_stream: Vec<u8>,
+}
+
+impl<T: SuitableDataType> DbManager<T> {
+    fn new(db: DbBase<T>) -> Self {
+        Self { db, previous_headers: Vec::default(), output_stream: Vec::default() }
+    }
+    fn store(&mut self, t: T) {
+        self.db.store(t);
+
+        if self.db.len() > FLUSH_CUTOFF {
+            let header = self.db.get_chunk_header();
+            self.previous_headers.push(header);
+            self.db.force_flush(&mut self.output_stream);
+        }
+        log::info!("Flushed tuples");
+    }
+    fn get_in_current<I>(&self, range: I) -> I::Output where I: SliceIndex<[T]>, <I as SliceIndex<[T]>>::Output: Sized + Clone {
+        self.db.data.get(range).unwrap().clone()
+    }
+
+    // fn get_in_all(&self, range: RB) -> &[T] {
+        // let ok_chunks = self.previous_headers.iter().filter(|h| h.)
+        // todo!()
+    // }
+}
+
+#[test]
+fn test_dbmanager() {}
+
+struct DbBase<T> {
+    data: Vec<T>,
+    limits: Range<T>,
+    is_sorted: bool,
+}
+
+impl<T: SuitableDataType> Debug for Range<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Range")
+            .field(&self.min)
+            .field(&self.max)
+            .finish()
+    }
+}
+
+impl<T: SuitableDataType> Debug for DbBase<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DbBase")
+            .field("data", &self.data)
+            .field("limits", &self.limits)
+            .finish()
+    }
+}
+
+impl<T: SuitableDataType> DbBase<T> {
+    fn len(&self) -> usize {
+        self.data.len()
+    }
     fn sort_self(&mut self) {
         self.data.sort_by(|a, b| a.partial_cmp(b).unwrap())
     }
     fn from_reader(mut r: impl Read) -> Self {
         let chunk_header = ChunkHeader::<T>::from_reader(&mut r);
 
-        let mut db = Self { data: Vec::with_capacity(chunk_header.length as usize), is_sorted: true };
-
+        let mut db = Self { limits: Range::new(None), data: Vec::with_capacity(chunk_header.length as usize), is_sorted: true };
         for _ in 0..chunk_header.length {
-            db.data.push(T::from_reader(&mut r))
+            let val = T::from_reader(&mut r);
+            db.store(val);
         }
         db.sort_self();
 
         return db;
     }
     fn store(&mut self, t: T) {
+        self.limits.add(&t);
         self.data.push(t);
         self.is_sorted = false;
     }
 
+    fn get_chunk_header(&self) -> ChunkHeader<T> {
+        ChunkHeader::<T> {
+            type_size: std::mem::size_of::<T>() as u32,
+            length: self.data.len() as u32,
+            limits: self.limits.clone()
+        }
+    }
     fn force_flush(&mut self, w: &mut impl Write) -> Vec<T> {
+        if self.data.is_empty() {
+            return Vec::new();
+        }
+        let header = self.get_chunk_header();
+
         let mut vec = std::mem::replace(&mut self.data, Vec::new());
         vec.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let header = ChunkHeader::<T> {
-            type_size: std::mem::size_of::<T>() as u32,
-            length: vec.len() as u32,
-            start: vec.first().unwrap().clone(),
-            end: vec.last().unwrap().clone()
-        };
         header.serialize(w);
         vec.iter().for_each(|a| T::serialize(a, w));
         vec
@@ -108,7 +266,7 @@ impl<T: SuitableDataType> DB<T> {
 fn test_key_lookup() {
     use rand::thread_rng;
     use suitable_data_type::DataType;
-    let mut db = DB::<DataType>::default();
+    let mut db = DbBase::<DataType>::default();
 
     let mut rng = thread_rng();
     for i in 0..10 {
@@ -118,16 +276,18 @@ fn test_key_lookup() {
     dbg!(db.key_lookup(8));
     dbg!(db.key_range((2, 30)));
 }
+
 #[cfg(test)]
 #[test]
 fn test1() {
     use rand::thread_rng;
     use suitable_data_type::DataType;
-    let mut db = DB::<DataType>::default();
+    let mut db = DbBase::<DataType>::default();
 
     let mut rng = thread_rng();
-    for _ in 0..10 {
-        db.store(DataType(1, 2, 3));
+    for i in 10u8..40u8 {
+        let mult: u8 = rand::random();
+        db.store(DataType(mult, i, i));
     }
     let mut buffer: Vec<u8> = Vec::new();
     let old_data = db.force_flush(&mut buffer);
@@ -135,7 +295,7 @@ fn test1() {
     println!("Hex: {:?}", buffer);
 
     let reader = buffer.as_slice();
-    let db1 = DB::<DataType>::from_reader(reader);
+    let db1 = DbBase::<DataType>::from_reader(reader);
     assert_eq!(old_data, db1.data);
     dbg!(db1);
 }
@@ -149,7 +309,7 @@ fn test2() {
     let mut buffer: Vec<u8> = Vec::new();
     let mut dbs = Vec::new();
     for _ in 0..150 {
-        let mut db = DB::<DataType>::default();
+        let mut db = DbBase::<DataType>::default();
 
         let mut rng = thread_rng();
         for _ in 0..10 {
@@ -163,7 +323,7 @@ fn test2() {
 
 
     for d in dbs {
-        let db1 = DB::<DataType>::from_reader(&mut reader);
+        let db1 = DbBase::<DataType>::from_reader(&mut reader);
         assert_eq!(d, db1.data);
     }
 }
@@ -178,7 +338,7 @@ fn test3() {
     let mut buffer: Vec<u8> = Vec::new();
     let mut dbs = Vec::new();
     for i in 0..150 {
-        let mut db = DB::<DataType>::default();
+        let mut db = DbBase::<DataType>::default();
 
         let mut rng = thread_rng();
         for _ in 0..10 {
