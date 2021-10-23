@@ -9,5 +9,14 @@ edition = "2021"
 rand = "*"
 log = "*"
 env_logger = "*"
+cpython = {version = "*", optional = true}
 
+[lib]
+path="src/python-lib.rs"
+crate-type=["cdylib"]
+name="pythonlib"
+required-features=["cpython"]
+
+[features]
+default=["cpython"]
 [dev-dependencies]
