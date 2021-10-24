@@ -1,25 +1,33 @@
+// Sample definition of database for storing GTFS-realtime data.
+
 #![feature(cursor_remaining)]
+#![feature(write_all_vectored)]
 #![feature(is_sorted)]
+#![feature(with_options)]
+
+use std::cmp::Ordering;
+use std::io::{Read, Cursor};
+use std::mem::MaybeUninit;
+
+
+use cpython::{PyBytes, PyDict, PyList, PyObject, PyResult, Python, PythonObject, ToPyObject};
+use cpython::{py_fn, py_module_initializer, py_class};
+
+pub use main_db::DbManager;
+pub use range::Range;
+
+use crate::bytes_serializer::{BytesSerialize, FromReader};
+use dbbase::DbBase;
+use crate::suitable_data_type::SuitableDataType;
+use std::fs::File;
 
 mod bytes_serializer;
 mod chunk_header;
 mod suitable_data_type;
 mod tests;
 mod main_db;
-
-pub use main_db::{DbManager, Range};
-use cpython;
-use cpython::{PyBytes, PyResult, Python, PyObject, PyNone, ToPyObject, ObjectProtocol, PyDict, PythonObject, PyList};
-use std::cmp::Ordering;
-use crate::suitable_data_type::SuitableDataType;
-use crate::bytes_serializer::{BytesSerialize, FromReader};
-use std::io::Read;
-use std::mem::MaybeUninit;
-use crate::chunk_header::slice_from_type;
-use crate::main_db::DbBase;
-
-use cpython::{py_module_initializer, py_fn};
-use std::convert::TryInto;
+mod range;
+mod dbbase;
 
 #[repr(C)]
 #[derive(Debug, Clone)]
@@ -32,11 +40,12 @@ struct BusStruct {
     longitude: f64,
     current_stop_sequence: u8,
     stop_id: u16,
-    vehicle_id: u16,
+    vehicle_id: u32,
     direction_id: bool,
 }
 
 impl BusStruct {
+    // Calls a function on all values of this struct.
     fn kv_iter<F: Fn(&str, PyObject)>(&self,_p: Python, callable: F) {
         callable("timestamp", ToPyObject::to_py_object(&self.timestamp, _p).into_object());
         callable("trip_id", ToPyObject::to_py_object(&self.trip_id, _p).into_object());
@@ -72,13 +81,15 @@ impl FromReader for BusStruct {
     }
 }
 
-static mut DBPTR: *mut DbManager<BusStruct> = std::ptr::null::<DbManager<BusStruct>>() as *mut _;
 
 
-unsafe fn init_dbptr() -> &'static mut DbManager<BusStruct> {
+
+static mut DBPTR: *mut DbManager<BusStruct, File> = std::ptr::null::<DbManager<BusStruct, File>>() as *mut _;
+unsafe fn init_dbptr() -> &'static mut DbManager<BusStruct, File> {
     if DBPTR as *const _ == std::ptr::null() {
-        let db = Box::new(DbManager::new(DbBase::default()));
-        let dbptr = Box::leak(db) as *mut DbManager<BusStruct>;
+        let file = File::with_options().read(true).append(true).open("/tmp/test.db").unwrap();
+        let db = Box::new(DbManager::new(DbBase::default(), file));
+        let dbptr = Box::leak(db) as *mut _;
         DBPTR = dbptr;
     }
     &mut *DBPTR
@@ -103,7 +114,7 @@ fn store(_p: Python, timestamp: u64,
          longitude: f64,
          current_stop_sequence: u8,
          stop_id: u16,
-         vehicle_id: u16,
+         vehicle_id: u32,
          direction_id: bool, ) -> PyResult<cpython::NoArgs> {
     let start_date: [u8; 8] = str_to_slice(start_date);
     let route_id: [u8; 5] = str_to_slice(route_id);
@@ -123,28 +134,30 @@ fn store(_p: Python, timestamp: u64,
     Ok(cpython::NoArgs)
 }
 
-
 fn get(_p: Python, pkey: u64) -> PyResult<PyList> {
-    let dbm = unsafe { init_dbptr() };
-    let result = dbm.get_in_all(pkey..=pkey);
-
-    let py_result: Vec<_> = result.into_iter().map(|a| {
-        let dict = PyDict::new(_p);
-        a.kv_iter(_p, |name, value| { dict.set_item(_p, name, value); });
-        dict.into_object()
-    }).collect();
-
-    Ok(PyList::new(_p, py_result.as_slice()))
+    get_range(_p, pkey, pkey)
 }
 
 
+fn get_range(_p: Python, pkey1: u64, pkey2: u64) -> PyResult<PyList> {
+    let dbm = unsafe { init_dbptr() };
+
+    let result = dbm.get_in_all(pkey1..=pkey2);
+    let py_result: Vec<_> = result.into_iter().map(|a| {
+        let dict = PyDict::new(_p);
+        a.kv_iter(_p, |name, value| { dict.set_item(_p, name, value).unwrap(); });
+        dict.into_object()
+    }).collect();
+
+
+    Ok(PyList::new(_p, py_result.as_slice()))
+}
 
 fn debug_dump(_p: Python) -> PyResult<cpython::NoArgs> {
     let db = unsafe { init_dbptr() };
     println!("{:?}", db);
     Ok(cpython::NoArgs)
 }
-
 py_module_initializer!(libpythonlib, |py, m| {
     m.add(py, "store", py_fn!(py, store(timestamp: u64,
     trip_id: u32,
@@ -154,10 +167,11 @@ py_module_initializer!(libpythonlib, |py, m| {
     longitude: f64,
     current_stop_sequence: u8,
     stop_id: u16,
-    vehicle_id: u16,
+    vehicle_id: u32,
     direction_id: bool)))?;
 
     m.add(py, "debug_dump", py_fn!(py, debug_dump()))?;
     m.add(py, "get", py_fn!(py, get(pkey: u64)))?;
+    m.add(py, "get_range", py_fn!(py, get_range(pkey1: u64, pkey2: u64)))?;
     Ok(())
 });

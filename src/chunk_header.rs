@@ -2,15 +2,16 @@ use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
-use crate::{Range};
+use crate::range::Range;
 use crate::suitable_data_type::SuitableDataType;
 
 const CH_CHECK_SEQUENCE: u32 = 0x32af8429;
+
 impl<T: SuitableDataType> BytesSerialize for ChunkHeader<T> where T: BytesSerialize {
     fn serialize<W: Write>(&self, mut w: W)  {
-        w.write(&CH_CHECK_SEQUENCE.to_le_bytes()).unwrap();
-        w.write(&self.type_size.to_le_bytes()).unwrap();
-        w.write(&self.length.to_le_bytes()).unwrap();
+        w.write_all(&CH_CHECK_SEQUENCE.to_le_bytes()).unwrap();
+        w.write_all(&self.type_size.to_le_bytes()).unwrap();
+        w.write_all(&self.length.to_le_bytes()).unwrap();
         self.limits.serialize(w);
     }
 }
@@ -37,6 +38,8 @@ impl<T: SuitableDataType> FromReader for ChunkHeader<T> {
     }
 }
 
+// Describes a chunk of tuples, such as min/max ranges (for binary searches), size of the tuple, and how many tuples
+// Will be serialized along with the data itself for quicker searches.
 #[repr(C)]
 pub struct ChunkHeader<T: SuitableDataType> {
     pub type_size: u32,
@@ -44,6 +47,8 @@ pub struct ChunkHeader<T: SuitableDataType> {
     pub limits: Range<T>
 }
 
+
+// Represents a collection of ChunkHeaders, along with their location in a file for latter searches
 #[derive(Debug)]
 pub struct ChunkHeaderIndex<T: SuitableDataType>(pub Vec<(ChunkHeader<T>, u64)>);
 

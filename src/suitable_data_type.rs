@@ -23,12 +23,13 @@ use crate::{bytes_serializer, from_reader};
 bytes_serializer!(DataType);
 from_reader!(DataType);
 pub trait SuitableDataType: PartialEq<u64> + PartialOrd<u64> + Ord + Clone + Debug + BytesSerialize + FromReader + 'static {
+    // Get the primary key that will be used for comparisons, sorting, and duplicate checks.
     fn first(&self) -> u64;
 }
 
 impl SuitableDataType for DataType {
     fn first(&self) -> u64 {
-        return self.0 as u64;
+        self.0 as u64
     }
 }
 #[macro_export]

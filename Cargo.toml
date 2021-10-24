@@ -1,3 +1,4 @@
+cargo-features=["edition2021"]
 [package]
 name = "db1"
 version = "0.1.0"
@@ -16,6 +17,7 @@ path="src/python-lib.rs"
 crate-type=["cdylib"]
 name="pythonlib"
 required-features=["cpython"]
+
 
 [features]
 default=["cpython"]
