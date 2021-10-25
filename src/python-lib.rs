@@ -5,19 +5,22 @@
 #![feature(is_sorted)]
 #![feature(with_options)]
 
+#![allow(clippy::manual_strip)]
+#![allow(clippy::assertions_on_constants)]
+
 use std::cmp::Ordering;
-use std::io::{Read, Cursor};
+use std::io::{Read};
 use std::mem::MaybeUninit;
 
 
 use cpython::{PyBytes, PyDict, PyList, PyObject, PyResult, Python, PythonObject, ToPyObject};
-use cpython::{py_fn, py_module_initializer, py_class};
+use cpython::{py_fn, py_module_initializer};
 
-pub use main_db::DbManager;
+pub use table_manager::TableManager;
 pub use range::Range;
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
-use dbbase::DbBase;
+
 use crate::suitable_data_type::SuitableDataType;
 use std::fs::File;
 
@@ -25,9 +28,12 @@ mod bytes_serializer;
 mod chunk_header;
 mod suitable_data_type;
 mod tests;
-mod main_db;
+mod table_manager;
 mod range;
-mod dbbase;
+mod table_base;
+mod buffer_pool;
+
+pub use suitable_data_type::DataType;
 
 #[repr(C)]
 #[derive(Debug, Clone)]
@@ -84,11 +90,11 @@ impl FromReader for BusStruct {
 
 
 
-static mut DBPTR: *mut DbManager<BusStruct, File> = std::ptr::null::<DbManager<BusStruct, File>>() as *mut _;
-unsafe fn init_dbptr() -> &'static mut DbManager<BusStruct, File> {
-    if DBPTR as *const _ == std::ptr::null() {
+static mut DBPTR: *mut TableManager<BusStruct, File> = std::ptr::null::<TableManager<BusStruct, File>>() as *mut _;
+unsafe fn init_dbptr() -> &'static mut TableManager<BusStruct, File> {
+    if DBPTR.is_null() {
         let file = File::with_options().read(true).append(true).open("/tmp/test.db").unwrap();
-        let db = Box::new(DbManager::new(DbBase::default(), file));
+        let db = Box::new(TableManager::new(file));
         let dbptr = Box::leak(db) as *mut _;
         DBPTR = dbptr;
     }
@@ -106,6 +112,7 @@ fn str_to_slice<const T: usize>(a: &str) -> [u8; T] {
     buf_same_len.copy_from_slice(a.as_bytes());
     buf
 }
+#[allow(clippy::too_many_arguments)]
 fn store(_p: Python, timestamp: u64,
          trip_id: u32,
          start_date: &str,

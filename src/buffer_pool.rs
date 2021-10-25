@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::dbbase::DbBase;
+use crate::table_base::TableBase;
 use crate::suitable_data_type::SuitableDataType;
 use std::iter::FromIterator;
 
@@ -9,7 +9,7 @@ pub struct BufferPool<T: SuitableDataType> {
     lru: HashMap<u64, u32>,
 
     // Maps from location -> actual in-memory database
-    buffer_pool: HashMap<u64, DbBase<T>>,
+    buffer_pool: HashMap<u64, TableBase<T>>,
 }
 
 impl<T: SuitableDataType> Default for BufferPool<T> {
@@ -21,7 +21,7 @@ impl<T: SuitableDataType> Default for BufferPool<T> {
 impl<T: SuitableDataType> BufferPool<T> {
     const MAX_BUFFERPOOL_SIZE: usize = 10;
 
-    pub fn load_page<Loader: FnOnce() -> DbBase<T>>(&mut self, location: u64, loader: Loader) -> &mut DbBase<T> {
+    pub fn load_page<Loader: FnOnce() -> TableBase<T>>(&mut self, location: u64, loader: Loader) -> &mut TableBase<T> {
         self.evict_if_necessary();
         self.lru.entry(location).and_modify(|e| { *e += 1 }).or_insert(1);
         self.buffer_pool.entry(location).or_insert_with(loader)
@@ -31,7 +31,7 @@ impl<T: SuitableDataType> BufferPool<T> {
         if self.buffer_pool.len() > Self::MAX_BUFFERPOOL_SIZE {
             // Find least recently used items
             let mut lru = Vec::from_iter(self.lru.iter().map(|(a, b)| (*a, *b)));
-            lru.sort_by_key(|(loc, uses)| *uses);
+            lru.sort_by_key(|(_loc, uses)| *uses);
             for (loc_to_remove, _) in lru {
                 if self.buffer_pool.len() > Self::MAX_BUFFERPOOL_SIZE {
                     self.lru.remove(&loc_to_remove);
@@ -50,8 +50,8 @@ mod test {
     use crate::*;
     use super::*;
 
-    fn default_loader() -> DbBase<DataType> {
-        DbBase::<DataType>::default()
+    fn default_loader() -> TableBase<DataType> {
+        TableBase::<DataType>::default()
     }
 
     #[test]
@@ -69,8 +69,8 @@ mod test {
         }
 
         // Loader should not be called, as there should be no evictions
-        buffer_pool.load_page(0 as u64, || panic!());
-        buffer_pool.load_page(1 as u64, || panic!());
+        buffer_pool.load_page(0_u64, || panic!());
+        buffer_pool.load_page(1_u64, || panic!());
 
         let mut called = false;
         buffer_pool.load_page(1000000, || {
@@ -80,8 +80,8 @@ mod test {
         assert!(called);
 
         // 1 should still be in pool, because it was most recently used
-        buffer_pool.load_page(1 as u64, || panic!());
-        buffer_pool.load_page(0 as u64, || panic!());
+        buffer_pool.load_page(1_u64, || panic!());
+        buffer_pool.load_page(0_u64, || panic!());
 
         for i in 0..10 {
             buffer_pool.load_page(i + 10000000, default_loader);

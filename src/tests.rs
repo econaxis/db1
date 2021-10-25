@@ -1,17 +1,29 @@
 #![cfg(test)]
 
 use std::io::{Cursor, Write, Seek};
-use std::ops::{Range as stdRange, RangeBounds};
+use std::ops::{Range as stdRange};
 use crate::*;
 use crate::suitable_data_type::DataType;
 use rand::random;
 use std::fs::File;
 use rand::prelude::SliceRandom;
+use crate::table_base::TableBase;
+
+#[test]
+fn test_editable() {
+    let mut db = TableManager::default();
+    db.store(DataType(0, 0, 0));
+    db.force_flush();
+    db.store_and_replace(DataType(1, 2, 2));
+    db.store_and_replace(DataType(0, 1, 1));
+    db.force_flush();
+    assert_eq!(db.get_in_all(0..=1), [DataType(0, 1, 1), DataType(1, 2, 2)]);
+}
 
 #[test]
 fn test_works_with_std_file() {
     let file = File::with_options().create(true).read(true).write(true).open("/tmp/test.db").unwrap();
-    let db = DbManager::new(DbBase::<DataType>::default(), file);
+    let db = TableManager::new(file);
     run_test_with_db(db);
 }
 
@@ -19,8 +31,8 @@ fn test_works_with_std_file() {
 #[test]
 fn test_crash_in_middle() {
     let mut buf = Vec::new();
-    let mut cursor = Cursor::new(&mut buf);
-    let mut db = DbManager::new(DbBase::<DataType>::default(), cursor);
+    let cursor = Cursor::new(&mut buf);
+    let mut db = TableManager::new(cursor);
 
     let mut last_lens: Vec<usize> = Vec::new();
     for i in generate_int_range(0, 110) {
@@ -43,7 +55,7 @@ fn test_crash_in_middle() {
         let mut b = Cursor::new(&buf[0..j]);
 
         while !b.is_empty() {
-            let db = DbBase::<DataType>::from_reader(&mut b);
+            let db = TableBase::<DataType>::from_reader(&mut b);
             current_tuples += db.data.len();
         }
         assert_eq!(current_tuples, tuples + 5);
@@ -62,8 +74,8 @@ fn test_range() {
 #[test]
 fn test_all_findable() {
     let mut solutions = Vec::new();
-    let mut dbm = DbManager::new(DbBase::default(), Cursor::new(Vec::<u8>::new()));
-    for i in generate_int_range(0, 200) {
+    let mut dbm = TableManager::default();
+    for i in generate_int_range(0, 100) {
         let val = DataType(i, random(), random());
         solutions.push(val.clone());
         dbm.store(val);
@@ -82,9 +94,10 @@ fn test_all_findable() {
 
 #[test]
 fn test_db_manager_vecu8() {
-    let mut dbm: DbManager<DataType> = DbManager::new(DbBase::default(), Cursor::new(Vec::<u8>::new()));
+    let dbm: TableManager<DataType> = TableManager::default();
     run_test_with_db(dbm);
 }
+
 
 // Generate Vec of unique, random integers in range [min, max)
 fn generate_int_range<T>(min: T, max: T) -> Vec<T> where stdRange<T>: Iterator<Item=T> {
@@ -93,7 +106,7 @@ fn generate_int_range<T>(min: T, max: T) -> Vec<T> where stdRange<T>: Iterator<I
     vec
 }
 
-fn run_test_with_db<T: Write + Read + Seek>(mut dbm: DbManager<DataType, T>) {
+fn run_test_with_db<T: Write + Read + Seek>(mut dbm: TableManager<DataType, T>) {
     let range: stdRange<u64> = 200..250;
     let mut expecting = Vec::new();
 
@@ -117,7 +130,7 @@ fn run_test_with_db<T: Write + Read + Seek>(mut dbm: DbManager<DataType, T>) {
 fn test_key_lookup() {
     use rand::{thread_rng, Rng};
     use suitable_data_type::DataType;
-    let mut db = DbBase::<DataType>::default();
+    let mut db = TableBase::<DataType>::default();
 
     let mut rng = thread_rng();
     for i in generate_int_range(0, 10) {
@@ -131,20 +144,20 @@ fn test_key_lookup() {
 fn test1() {
     use rand::{thread_rng};
     use suitable_data_type::DataType;
-    let mut db = DbBase::<DataType>::default();
+    let mut db = TableBase::<DataType>::default();
 
     let _rng = thread_rng();
     for i in generate_int_range(1, 40) {
         db.store(DataType(i, i, i));
     }
     let mut buffer: Vec<u8> = Vec::new();
-    let old_data = db.force_flush(&mut buffer);
+    let (_, old_data) = db.force_flush(&mut buffer);
 
     println!("Hex: {:?}", buffer);
 
     let reader = buffer.as_slice();
     let mut reader_cursor = Cursor::new(reader);
-    let db1 = DbBase::<DataType>::from_reader(&mut reader_cursor);
+    let db1 = TableBase::<DataType>::from_reader(&mut reader_cursor);
     assert_eq!(old_data, db1.data);
     dbg!(db1);
 }
@@ -158,21 +171,21 @@ fn test2() {
     let mut buffer: Vec<u8> = Vec::new();
     let mut dbs = Vec::new();
     for _ in 0..150 {
-        let mut db = DbBase::<DataType>::default();
+        let mut db = TableBase::<DataType>::default();
 
         let mut rng = thread_rng();
         for i in generate_int_range(0, 10) {
             db.store(DataType(i as u8, rng.gen(), rng.gen()));
         }
         let old_data = db.force_flush(&mut buffer);
-        dbs.push(old_data);
+        dbs.push(old_data.1);
     }
 
     let mut reader = Cursor::new(&buffer);
 
 
     for d in dbs {
-        let db1 = DbBase::<DataType>::from_reader(&mut reader);
+        let db1 = TableBase::<DataType>::from_reader(&mut reader);
         assert_eq!(d, db1.data);
     }
 }
@@ -185,8 +198,8 @@ fn test3() {
 
     let mut buffer: Vec<u8> = Vec::new();
     let mut dbs = Vec::new();
-    for i in generate_int_range(0, 150) {
-        let mut db = DbBase::<DataType>::default();
+    for _i in generate_int_range(0, 150) {
+        let mut db = TableBase::<DataType>::default();
 
         let mut rng = thread_rng();
         for j in 0..10 {
