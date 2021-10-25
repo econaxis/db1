@@ -3,16 +3,16 @@
 
 
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
-use std::fmt::{Debug, Display, Formatter};
+use std::collections::{BTreeSet};
+use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::iter::FromIterator;
+
 use std::ops::RangeBounds;
 
-use crate::bytes_serializer::{BytesSerialize, FromReader};
+use crate::bytes_serializer::{FromReader};
 use crate::chunk_header::ChunkHeader;
-use crate::dbbase::DbBase;
-use crate::range::Range;
+use crate::table_base::TableBase;
+
 use crate::suitable_data_type::SuitableDataType;
 use crate::buffer_pool::BufferPool;
 
@@ -23,14 +23,14 @@ fn setup_logging() {
 
 
 // Provides higher level database API's -- automated flushing to disk, query functions for previously flushed chunks
-pub struct DbManager<T: SuitableDataType, Writer: Write + Seek + Read = Cursor<Vec<u8>>> {
-    db: DbBase<T>,
+pub struct TableManager<T: SuitableDataType, Writer: Write + Seek + Read = Cursor<Vec<u8>>> {
+    db: TableBase<T>,
     previous_headers: Vec<(u64, ChunkHeader<T>)>,
     buffer_pool: BufferPool<T>,
     output_stream: Writer,
 }
 
-impl<T: SuitableDataType, Writer: Write + Seek + Read> DbManager<T, Writer> {
+impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     // Maximum tuples we can hold in memory. After this amount, we empty to disk.
     const FLUSH_CUTOFF: usize = 5;
 
@@ -60,15 +60,15 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> DbManager<T, Writer> {
     }
 
     // Filter all chunk headers that can possibly satisfy range, and return their locations in the stream
-    fn chunks_in_range<RB: RangeBounds<u64>>(headers: &Vec<(u64, ChunkHeader<T>)>, range: &RB) -> Vec<u64> {
+    fn chunks_in_range<RB: RangeBounds<u64>>(headers: &[(u64, ChunkHeader<T>)], range: &RB) -> Vec<u64> {
         headers.iter().filter_map(|(pos, h)|
             h.limits.overlaps(range).then(|| *pos)).collect()
     }
 
-    fn load_page(&mut self, page_loc: u64) -> &mut DbBase<T> {
+    fn load_page(&mut self, page_loc: u64) -> &mut TableBase<T> {
         let loader = || {
             self.output_stream.seek(SeekFrom::Start(page_loc)).unwrap();
-            DbBase::<T>::from_reader(&mut self.output_stream)
+            TableBase::<T>::from_reader(&mut self.output_stream)
         };
 
         self.buffer_pool.load_page(page_loc, loader)
@@ -106,7 +106,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> DbManager<T, Writer> {
     }
 }
 
-impl<T: SuitableDataType, Writer: Write + Seek + Read> Debug for DbManager<T, Writer> {
+impl<T: SuitableDataType, Writer: Write + Seek + Read> Debug for TableManager<T, Writer> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DbManager")
             .field("current_data", &self.db)
@@ -115,9 +115,9 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> Debug for DbManager<T, Wr
     }
 }
 
-impl<T: SuitableDataType> Default for DbManager<T> {
+impl<T: SuitableDataType> Default for TableManager<T> {
     fn default() -> Self {
-        let db = DbBase::default();
+        let db = TableBase::default();
         Self { db, output_stream: Cursor::new(Vec::new()), buffer_pool: Default::default(), previous_headers: Default::default() }
     }
 }

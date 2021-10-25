@@ -6,15 +6,15 @@ use crate::bytes_serializer::{BytesSerialize, FromReader};
 use crate::chunk_header::ChunkHeader;
 use crate::Range;
 use crate::suitable_data_type::SuitableDataType;
-use crate::main_db::assert_no_dups;
+use crate::table_manager::assert_no_dups;
 
-impl<T: Ord + Clone> Default for DbBase<T> {
+impl<T: Ord + Clone> Default for TableBase<T> {
     fn default() -> Self {
         Self { limits: Range::new(None), data: Vec::new(), is_sorted: true }
     }
 }
 
-impl<T: PartialEq> PartialEq for DbBase<T> {
+impl<T: PartialEq> PartialEq for TableBase<T> {
     fn eq(&self, other: &Self) -> bool {
         self.data.eq(&other.data)
     }
@@ -22,13 +22,13 @@ impl<T: PartialEq> PartialEq for DbBase<T> {
 
 
 // Raw database instance for storing data, getting min/max of data, and querying data.
-pub struct DbBase<T> {
+pub struct TableBase<T> {
     pub(crate) data: Vec<T>,
     limits: Range<T>,
     is_sorted: bool,
 }
 
-impl<T: SuitableDataType> Debug for DbBase<T> {
+impl<T: SuitableDataType> Debug for TableBase<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DbBase")
             .field("data", &self.data)
@@ -37,7 +37,7 @@ impl<T: SuitableDataType> Debug for DbBase<T> {
     }
 }
 
-impl <T: SuitableDataType> FromReader for DbBase<T> {
+impl <T: SuitableDataType> FromReader for TableBase<T> {
     // Read bytes into a DbBase instance
     fn from_reader<R: Read>(r: &mut R) -> Self {
         let chunk_header = ChunkHeader::<T>::from_reader(r);
@@ -54,7 +54,7 @@ impl <T: SuitableDataType> FromReader for DbBase<T> {
     }
 }
 
-impl<T: SuitableDataType> DbBase<T> {
+impl<T: SuitableDataType> TableBase<T> {
     pub(crate) fn len(&self) -> usize {
         self.data.len()
     }
@@ -72,6 +72,15 @@ impl<T: SuitableDataType> DbBase<T> {
         self.is_sorted = false;
     }
 
+    pub(crate) fn store_and_replace(&mut self, t: T) -> Option<T> {
+        if let Some(found) =  self.data.iter_mut().find(|x| **x == t) {
+            Some(std::mem::replace(found, t))
+        } else {
+            self.store(t);
+            None
+        }
+    }
+
     // Get the chunk header of current in-memory data
     pub(crate) fn get_chunk_header(&self) -> ChunkHeader<T> {
         ChunkHeader::<T> {
@@ -82,21 +91,20 @@ impl<T: SuitableDataType> DbBase<T> {
     }
 
     // Clear in-memory contents and flush to disk
-    pub(crate) fn force_flush(&mut self, mut w: impl Write) -> Vec<T> {
-        if self.data.is_empty() {
-            return Vec::new();
-        }
+    pub(crate) fn force_flush(&mut self, mut w: impl Write) -> (ChunkHeader<T>, Vec<T>) {
+        assert!(!self.data.is_empty());
+
         let header = self.get_chunk_header();
 
         self.limits = Range::new(None);
         self.sort_self();
         debug_assert!(assert_no_dups(&self.data));
 
-        let mut vec = std::mem::take(&mut self.data);
+        let vec = std::mem::take(&mut self.data);
         header.serialize(&mut w);
         vec.iter().for_each(|a| T::serialize(a, &mut w));
         w.flush().unwrap();
-        vec
+        (header, vec)
     }
 
 
