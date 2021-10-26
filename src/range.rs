@@ -1,6 +1,6 @@
 use std::collections::Bound;
 use std::fmt::{Debug, Formatter};
-use std::io::{Read, Write};
+use std::io::{Read, Write, Seek};
 use std::ops::RangeBounds;
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
@@ -9,10 +9,10 @@ use crate::suitable_data_type::SuitableDataType;
 const CHECK_SEQUENCE: u8 = 98;
 
 impl<T: SuitableDataType> BytesSerialize for Range<T> {
-    fn serialize<W: Write>(&self, mut w: W) {
+    fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut w: W, mut _heap: W1) {
         w.write_all(&CHECK_SEQUENCE.to_le_bytes()).unwrap();
-        self.min.as_ref().unwrap().serialize(&mut w);
-        self.max.as_ref().unwrap().serialize(w);
+        self.min.as_ref().unwrap().serialize_with_heap(&mut w, &mut _heap);
+        self.max.as_ref().unwrap().serialize_with_heap(w, &mut _heap);
     }
 }
 
@@ -47,12 +47,12 @@ impl<T: Ord + Clone> Range<T> {
 }
 
 impl<T: SuitableDataType> FromReader for Range<T> {
-    fn from_reader<R: Read>(r: &mut R) -> Self {
+    fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
         let mut check = [0u8; 1];
         r.read_exact(&mut check).unwrap();
         assert_eq!(check[0], CHECK_SEQUENCE);
-        let min = T::from_reader(r);
-        let max = T::from_reader(r);
+        let min = T::from_reader_and_heap(&mut r, heap);
+        let max = T::from_reader_and_heap(&mut r, heap);
         Self { min: Some(min), max: Some(max) }
     }
 }

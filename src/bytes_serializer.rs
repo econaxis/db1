@@ -1,16 +1,16 @@
-use std::io::Write;
+use std::io::{Write, Read, Seek};
 
 pub trait FromReader {
-    fn from_reader<R: std::io::Read>(r: &mut R) -> Self;
+    fn from_reader_and_heap<R: Read>(r: R, heap: &[u8]) -> Self;
 }
 
 pub trait BytesSerialize: Sized {
-    fn serialize<W: Write>(&self, mut w:  W) {
+    fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut data: W, mut heap: W1) {
         let bytes = unsafe {
             std::slice::from_raw_parts(self as *const Self as *const u8, std::mem::size_of::<Self>())
         };
 
-        w.write_all(bytes).unwrap();
+        data.write_all(bytes).unwrap();
     }
 }
 
@@ -25,7 +25,7 @@ macro_rules! bytes_serializer {
 macro_rules! from_reader {
     ($x: ty) => {
         impl crate::bytes_serializer::FromReader for $x {
-            fn from_reader<R: std::io::Read>(r: &mut R) -> Self {
+            fn from_reader_and_heap<R: Read>(mut r: R, mut data: &[u8]) -> Self {
                 let mut buffer = [0u8; std::mem::size_of::<$x>()];
                 r.read_exact(&mut buffer).unwrap();
 

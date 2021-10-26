@@ -20,9 +20,61 @@ impl DataType {
 }
 
 use crate::{bytes_serializer, from_reader};
+use std::io::{Write, Read, Seek, SeekFrom};
+use std::fs::read;
+use std::process::Output;
+use crate::chunk_header::slice_from_type;
 bytes_serializer!(DataType);
 from_reader!(DataType);
+
+
+const STRING_CHECK_SEQ: u16 = 0x72a0;
+impl FromReader for String {
+    fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
+
+        let mut check_sequence: u16 = 0;
+        let mut loc: u64 = 0;
+        let mut len: u64 = 0;
+        r.read_exact(slice_from_type(&mut check_sequence));
+        r.read_exact(slice_from_type(&mut loc));
+        r.read_exact(slice_from_type(&mut len));
+
+        assert_eq!(check_sequence, STRING_CHECK_SEQ);
+
+        if (loc == 0 && len == 0) || heap == &[] {
+            return String::new();
+        }
+        let buffer_slice = &heap[loc as usize..(loc + len) as usize];
+        String::from_utf8(Vec::from(buffer_slice)).unwrap()
+    }
+}
+
+impl BytesSerialize for String {
+    fn serialize_with_heap<W: Write, W1: Write + Seek> (&self, mut data: W, mut heap: W1) {
+        let slice = self.as_bytes();
+        let heap_position = heap.stream_position().unwrap();
+        data.write_all(&STRING_CHECK_SEQ.to_le_bytes()).unwrap();
+        data.write_all(&heap_position.to_le_bytes()).unwrap();
+        data.write_all(&slice.len().to_le_bytes()).unwrap();
+        heap.write_all(slice).unwrap();
+    }
+}
+
+// impl<T: Sized + FromReader> VariableLength<T> {
+//     pub fn load_value<R: Read + Seek>(&mut self, reader:&mut R) {
+//         match self {
+//             Self::RealValue(_) => {},
+//             Self::Pointer(loc) => {
+//                 reader.seek(SeekFrom::Start(*loc));
+//                 *self = Self::RealValue(T::from_reader_and_heap(reader));
+//             }
+//         }
+//     }
+// }
+
 pub trait SuitableDataType: PartialEq<u64> + PartialOrd<u64> + Ord + Clone + Debug + BytesSerialize + FromReader + 'static {
+    const REQUIRES_HEAP: bool = false;
+    const TYPE_SIZE: u64 = std::mem::size_of::<Self>() as u64;
     // Get the primary key that will be used for comparisons, sorting, and duplicate checks.
     fn first(&self) -> u64;
 }

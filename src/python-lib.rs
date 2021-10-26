@@ -53,16 +53,19 @@ struct BusStruct {
 impl BusStruct {
     // Calls a function on all values of this struct.
     fn kv_iter<F: Fn(&str, PyObject)>(&self,_p: Python, callable: F) {
-        callable("timestamp", ToPyObject::to_py_object(&self.timestamp, _p).into_object());
-        callable("trip_id", ToPyObject::to_py_object(&self.trip_id, _p).into_object());
+        fn into_py_object<T: ToPyObject>(t: &T, _p: Python) -> PyObject {
+            t.into_py_object(_p).into_object()
+        }
+        callable("timestamp", into_py_object(&self.timestamp, _p));
+        callable("trip_id", into_py_object(&self.trip_id, _p));
         callable("start_date", PyBytes::new(_p, &self.start_date).into_object());
         callable("route_id", PyBytes::new(_p, &self.route_id).into_object());
-        callable("latitude", ToPyObject::to_py_object(&self.latitude, _p).into_object());
-        callable("longitude", ToPyObject::to_py_object(&self.longitude, _p).into_object());
-        callable("current_stop_sequence", ToPyObject::to_py_object(&self.current_stop_sequence, _p).into_object());
-        callable("stop_id", ToPyObject::to_py_object(&self.stop_id, _p).into_object());
-        callable("vehicle_id", ToPyObject::to_py_object(&self.vehicle_id, _p).into_object());
-        callable("direction_id", ToPyObject::to_py_object(&self.direction_id, _p).into_object());
+        callable("latitude", into_py_object(&self.latitude, _p));
+        callable("longitude", into_py_object(&self.longitude, _p));
+        callable("current_stop_sequence", into_py_object(&self.current_stop_sequence, _p));
+        callable("stop_id", into_py_object(&self.stop_id, _p));
+        callable("vehicle_id", into_py_object(&self.vehicle_id, _p));
+        callable("direction_id", into_py_object(&self.direction_id, _p));
     }
 }
 
@@ -79,7 +82,7 @@ unsafe fn raw_ptr_to_slice<'a, T, A: 'a>(ptr: *mut T, _lifetime: &A) -> &'a mut 
 }
 
 impl FromReader for BusStruct {
-    fn from_reader<R: Read>(r: &mut R) -> Self {
+    fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
         let mut buf = MaybeUninit::<BusStruct>::uninit();
         let buf_u8 = unsafe { raw_ptr_to_slice(buf.as_mut_ptr(), &buf) };
         r.read_exact(buf_u8).unwrap();

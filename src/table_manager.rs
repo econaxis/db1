@@ -1,4 +1,4 @@
-// todo: compression, secondary indexes
+// todo: compression, secondary indexes, heap
 
 
 
@@ -68,7 +68,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     fn load_page(&mut self, page_loc: u64) -> &mut TableBase<T> {
         let loader = || {
             self.output_stream.seek(SeekFrom::Start(page_loc)).unwrap();
-            TableBase::<T>::from_reader(&mut self.output_stream)
+            TableBase::<T>::from_reader_and_heap(&mut self.output_stream, &[])
         };
 
         self.buffer_pool.load_page(page_loc, loader)
