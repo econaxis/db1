@@ -13,7 +13,7 @@ use crate::bytes_serializer::{FromReader};
 use crate::chunk_header::ChunkHeader;
 use crate::table_base::TableBase;
 
-use crate::suitable_data_type::SuitableDataType;
+use crate::suitable_data_type::{SuitableDataType, QueryableDataType};
 use crate::buffer_pool::BufferPool;
 
 #[allow(unused)]
@@ -60,7 +60,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     }
 
     // Filter all chunk headers that can possibly satisfy range, and return their locations in the stream
-    fn chunks_in_range<RB: RangeBounds<u64>>(headers: &[(u64, ChunkHeader<T>)], range: &RB) -> Vec<u64> {
+    fn chunks_in_range<RB: RangeBounds<u64>>(headers: &[(u64, ChunkHeader<T>)], range: &RB) -> Vec<u64> where T: QueryableDataType {
         headers.iter().filter_map(|(pos, h)|
             h.limits.overlaps(range).then(|| *pos)).collect()
     }
@@ -74,7 +74,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
         self.buffer_pool.load_page(page_loc, loader)
     }
     // Iterate through all the previously flushed chunk headers and look for all tuples contained in range `RB`
-    pub fn get_in_all<RB: RangeBounds<u64>>(&mut self, range: RB) -> Vec<T> {
+    pub fn get_in_all<RB: RangeBounds<u64>>(&mut self, range: RB) -> Vec<T> where T: QueryableDataType{
         let ok_chunks = Self::chunks_in_range(&self.previous_headers, &range);
         let mut cln = BTreeSet::new();
         for pos in ok_chunks {

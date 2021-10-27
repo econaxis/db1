@@ -1,13 +1,13 @@
 use std::fmt::{Debug, Formatter};
-use std::io::{Read, Write, Cursor, Seek, SeekFrom};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::ops::RangeBounds;
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
 use crate::chunk_header::ChunkHeader;
 use crate::Range;
-use crate::suitable_data_type::{SuitableDataType};
+use crate::suitable_data_type::{QueryableDataType, SuitableDataType};
 use crate::table_manager::assert_no_dups;
-
+use crate::heap_writer;
 impl<T: Ord + Clone> Default for TableBase<T> {
     fn default() -> Self {
         Self { limits: Range::new(None), data: Vec::new(), is_sorted: true, heap: Default::default() }
@@ -49,21 +49,20 @@ fn read_to_vec<R: Read>(mut r: R, len: usize) -> Vec<u8> {
 }
 
 impl<T: SuitableDataType> FromReader for TableBase<T> {
-
-
     // Read bytes into a DbBase instance
-    fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
-        assert_eq!(heap, &[]);
+    fn from_reader_and_heap<R: Read>(mut r: R, _heap: &[u8]) -> Self {
+        assert_eq!(_heap, &[]);
         //todo: add heap offset to chunk header, implement rest of functions, test heap requiring struct
-        let chunk_header = ChunkHeader::<T>::from_reader_and_heap(&mut r, heap);
+        let chunk_header = ChunkHeader::<T>::from_reader_and_heap(&mut r, _heap);
 
         let mut buf = read_to_vec(&mut r, chunk_header.calculate_total_size());
-        let (data, heap) = buf.split_at_mut(chunk_header.calculate_heap_offset());
+        let (data, heap_unchecked) = buf.split_at_mut(chunk_header.calculate_heap_offset());
+        let mut heap = heap_writer::check(heap_unchecked);
         let mut data_cursor = Cursor::new(data);
 
         // Sanity checks
         if !T::REQUIRES_HEAP {
-            assert!(heap.is_empty());
+            assert_eq!(heap.len(), 2);
         }
 
         let mut db = Self { is_sorted: true, ..Default::default() };
@@ -78,21 +77,8 @@ impl<T: SuitableDataType> FromReader for TableBase<T> {
     }
 }
 
-struct EmptyWriter;
-
-impl Write for EmptyWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        todo!()
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        todo!()
-    }
-}
-impl Seek for EmptyWriter {
-    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        todo!()
-    }
+fn empty_writer() -> Cursor<Vec<u8>> {
+    Cursor::default()
 }
 
 impl<T: SuitableDataType> TableBase<T> {
@@ -137,28 +123,36 @@ impl<T: SuitableDataType> TableBase<T> {
     }
 
     // Clear in-memory contents and flush to disk
+    // Flushes like this: header - data - heap
+    // We have to serialize to data + heap first (in a separate buffer), so we can calculate the data length and heap offset.
+    // Then, we put data length + heap offset into the header and serialize that.
     pub(crate) fn force_flush(&mut self, mut w: impl Write) -> (ChunkHeader<T>, Vec<T>) {
-        assert!(!self.data.is_empty());
         self.sort_self();
+        assert!(!self.data.is_empty());
         debug_assert!(assert_no_dups(&self.data));
-        let mut heap = Cursor::new(Vec::new());
-        let mut data = Cursor::new(Vec::new());
+
+        let mut heap = heap_writer::heap_writer();
+        let mut data = empty_writer();
         self.data.iter().for_each(|a| a.serialize_with_heap(&mut data, &mut heap));
 
         let header = self.get_chunk_header(heap.stream_position().unwrap());
 
-        header.serialize_with_heap(&mut w, Cursor::new(Vec::new()));
-        dbg!(&header, &data, &heap);
-        self.limits = Range::new(None);
-
+        header.serialize_with_heap(&mut w, empty_writer());
 
         w.write_all(&data.into_inner()).unwrap();
         w.write_all(&heap.into_inner()).unwrap();
         w.flush().unwrap();
         let vec = std::mem::take(&mut self.data);
+
+        // Reset self
+        *self = Self::default();
         (header, vec)
     }
 
+
+}
+
+impl <T: QueryableDataType>  TableBase<T> {
 
     // Get slice corresponding to a primary key range
     pub(crate) fn key_range<RB: RangeBounds<u64>>(&self, range: &RB) -> &[T] {

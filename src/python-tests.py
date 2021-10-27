@@ -18,8 +18,8 @@ from libpythonlib import *
 
 prev_pkeys = set()
 data = []
-for _ in range(0, 1000):
-    value = (random.randint(1, 100000), random.randint(1, 100000), "12345678", "12345", 1, 1, 1, 1, 1, True)
+for i in range(0, 1000):
+    value = (i * 10, random.randint(1, 100000), "12345678", "12345", 1, 1, 1, 1, 1, True)
     if value[0] in prev_pkeys:
         continue
     else:

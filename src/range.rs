@@ -4,9 +4,10 @@ use std::io::{Read, Write, Seek};
 use std::ops::RangeBounds;
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
-use crate::suitable_data_type::SuitableDataType;
+use crate::suitable_data_type::{SuitableDataType, QueryableDataType};
+use crate::chunk_header::slice_from_type;
 
-const CHECK_SEQUENCE: u8 = 98;
+const CHECK_SEQUENCE: u16 = 22859;
 
 impl<T: SuitableDataType> BytesSerialize for Range<T> {
     fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut w: W, mut _heap: W1) {
@@ -48,9 +49,9 @@ impl<T: Ord + Clone> Range<T> {
 
 impl<T: SuitableDataType> FromReader for Range<T> {
     fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
-        let mut check = [0u8; 1];
-        r.read_exact(&mut check).unwrap();
-        assert_eq!(check[0], CHECK_SEQUENCE);
+        let mut check: u16 = 0;
+        r.read_exact(slice_from_type(&mut check)).unwrap();
+        assert_eq!(check, CHECK_SEQUENCE);
         let min = T::from_reader_and_heap(&mut r, heap);
         let max = T::from_reader_and_heap(&mut r, heap);
         Self { min: Some(min), max: Some(max) }
@@ -58,7 +59,7 @@ impl<T: SuitableDataType> FromReader for Range<T> {
 }
 
 
-impl<T: SuitableDataType> Range<T> {
+impl<T: QueryableDataType> Range<T> {
     pub fn overlaps<RB: RangeBounds<u64>>(&self, rb: &RB) -> bool {
         match (&self.min, &self.max) {
             (Some(min), Some(max)) => {

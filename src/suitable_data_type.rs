@@ -72,7 +72,8 @@ impl BytesSerialize for String {
 //     }
 // }
 
-pub trait SuitableDataType: PartialEq<u64> + PartialOrd<u64> + Ord + Clone + Debug + BytesSerialize + FromReader + 'static {
+pub trait QueryableDataType: SuitableDataType + PartialOrd<u64> + PartialEq<u64> {}
+pub trait SuitableDataType: Ord +  Clone + Debug + BytesSerialize + FromReader + 'static {
     const REQUIRES_HEAP: bool = false;
     const TYPE_SIZE: u64 = std::mem::size_of::<Self>() as u64;
     // Get the primary key that will be used for comparisons, sorting, and duplicate checks.
@@ -84,6 +85,7 @@ impl SuitableDataType for DataType {
         self.0 as u64
     }
 }
+impl QueryableDataType for DataType {}
 #[macro_export]
 macro_rules! gen_suitable_data_type_impls {
     ($t:ty) => {

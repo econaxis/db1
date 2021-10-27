@@ -5,7 +5,7 @@ use crate::bytes_serializer::{BytesSerialize, FromReader};
 use crate::range::Range;
 use crate::suitable_data_type::SuitableDataType;
 
-const CH_CHECK_SEQUENCE: u32 = 0x32af8429;
+const CH_CHECK_SEQUENCE: u32 = 0x32aa8429;
 
 impl<T: SuitableDataType> BytesSerialize for ChunkHeader<T> where T: BytesSerialize {
     fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut w: W, mut _heap: W1)  {

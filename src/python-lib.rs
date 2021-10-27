@@ -21,7 +21,7 @@ pub use range::Range;
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
 
-use crate::suitable_data_type::SuitableDataType;
+use crate::suitable_data_type::{SuitableDataType, QueryableDataType};
 use std::fs::File;
 
 mod bytes_serializer;
@@ -32,6 +32,7 @@ mod table_manager;
 mod range;
 mod table_base;
 mod buffer_pool;
+mod heap_writer;
 
 pub use suitable_data_type::DataType;
 
@@ -68,6 +69,7 @@ impl BusStruct {
         callable("direction_id", into_py_object(&self.direction_id, _p));
     }
 }
+impl QueryableDataType for BusStruct {}
 
 impl SuitableDataType for BusStruct {
     fn first(&self) -> u64 {
@@ -96,7 +98,7 @@ impl FromReader for BusStruct {
 static mut DBPTR: *mut TableManager<BusStruct, File> = std::ptr::null::<TableManager<BusStruct, File>>() as *mut _;
 unsafe fn init_dbptr() -> &'static mut TableManager<BusStruct, File> {
     if DBPTR.is_null() {
-        let file = File::with_options().read(true).append(true).open("/tmp/test.db").unwrap();
+        let file = File::with_options().read(true).write(true).truncate(true).open("/tmp/test.db").unwrap();
         let db = Box::new(TableManager::new(file));
         let dbptr = Box::leak(db) as *mut _;
         DBPTR = dbptr;
