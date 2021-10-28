@@ -18,7 +18,7 @@ impl<T: SuitableDataType> BytesSerialize for Range<T> {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Range<T> {
     pub(crate) min: Option<T>,
     pub(crate) max: Option<T>,

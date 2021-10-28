@@ -3,14 +3,16 @@ use std::io::{Cursor, Read, Seek, Write};
 use std::ops::RangeBounds;
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
-use crate::chunk_header::ChunkHeader;
-use crate::Range;
+use crate::chunk_header::{ChunkHeader, ChunkHeaderIndex};
+use crate::{Range, DataType};
 use crate::suitable_data_type::{QueryableDataType, SuitableDataType};
 use crate::table_manager::assert_no_dups;
 use crate::heap_writer;
+
+
 impl<T: Ord + Clone> Default for TableBase<T> {
     fn default() -> Self {
-        Self { limits: Range::new(None), data: Vec::new(), is_sorted: true}
+        Self { limits: Range::new(None), data: Vec::new(), is_sorted: true }
     }
 }
 
@@ -23,7 +25,7 @@ impl<T: PartialEq> PartialEq for TableBase<T> {
 
 // Raw database instance for storing data, getting min/max of data, and querying data.
 pub struct TableBase<T> {
-     data: Vec<T>,
+    data: Vec<T>,
     limits: Range<T>,
     is_sorted: bool,
 }
@@ -37,6 +39,7 @@ impl<T: SuitableDataType> Debug for TableBase<T> {
     }
 }
 
+
 fn read_to_vec<R: Read>(mut r: R, len: usize) -> Vec<u8> {
     let mut buf = Vec::with_capacity(len);
     unsafe {
@@ -49,8 +52,9 @@ fn read_to_vec<R: Read>(mut r: R, len: usize) -> Vec<u8> {
 
 impl<T: SuitableDataType> FromReader for TableBase<T> {
     // Read bytes into a DbBase instance
+
     fn from_reader_and_heap<R: Read>(mut r: R, _heap: &[u8]) -> Self {
-        assert_eq!(_heap, &[]);
+        assert_eq!(_heap.len(), 0);
         let chunk_header = ChunkHeader::<T>::from_reader_and_heap(&mut r, _heap);
 
         let mut buf = read_to_vec(&mut r, chunk_header.calculate_total_size());
@@ -64,7 +68,6 @@ impl<T: SuitableDataType> FromReader for TableBase<T> {
             let val = T::from_reader_and_heap(&mut data_cursor, heap);
             db.store(val);
         }
-        db.sort_self();
 
         db
     }
@@ -74,11 +77,19 @@ fn empty_writer() -> Cursor<Vec<u8>> {
     Cursor::default()
 }
 
+#[cfg(test)]
 impl<T: SuitableDataType> TableBase<T> {
-    #[cfg(test)]
     pub fn get_data(&self) -> &Vec<T> {
         &self.data
     }
+    pub fn store_many(&mut self, t: &[T]) {
+        for elem in t {
+            self.store(elem.clone());
+        }
+    }
+}
+
+impl<T: SuitableDataType> TableBase<T> {
     pub(crate) fn len(&self) -> usize {
         self.data.len()
     }
@@ -96,6 +107,7 @@ impl<T: SuitableDataType> TableBase<T> {
         self.is_sorted = false;
     }
 
+
     pub(crate) fn store_and_replace(&mut self, t: T) -> Option<T> {
         if let Some(found) = self.data.iter_mut().find(|x| **x == t) {
             Some(std::mem::replace(found, t))
@@ -106,6 +118,7 @@ impl<T: SuitableDataType> TableBase<T> {
     }
 
     // Get the chunk header of current in-memory data
+
     pub(crate) fn get_chunk_header(&self, heap_size: u64) -> ChunkHeader<T> {
         ChunkHeader::<T> {
             type_size: T::TYPE_SIZE as u32,
@@ -119,7 +132,8 @@ impl<T: SuitableDataType> TableBase<T> {
     // Flushes like this: header - data - heap
     // We have to serialize to data + heap first (in a separate buffer), so we can calculate the data length and heap offset.
     // Then, we put data length + heap offset into the header and serialize that.
-    pub(crate) fn force_flush(&mut self, mut w: impl Write) -> (ChunkHeader<T>, Vec<T>) {
+
+    pub(crate) fn force_flush<W: Write>(&mut self, mut w: W) -> (ChunkHeader<T>, Vec<T>) {
         self.sort_self();
         assert!(!self.data.is_empty());
         debug_assert!(assert_no_dups(&self.data));
@@ -141,13 +155,11 @@ impl<T: SuitableDataType> TableBase<T> {
         *self = Self::default();
         (header, vec)
     }
-
-
 }
 
-impl <T: QueryableDataType>  TableBase<T> {
-
+impl<T: QueryableDataType> TableBase<T> {
     // Get slice corresponding to a primary key range
+
     pub(crate) fn key_range<RB: RangeBounds<u64>>(&self, range: &RB) -> &[T] {
         use std::ops::Bound::*;
         if self.is_sorted {
@@ -167,5 +179,18 @@ impl <T: QueryableDataType>  TableBase<T> {
         });
         assert!(start_idx <= end_idx);
         self.data.get(start_idx..end_idx).unwrap()
+    }
+}
+
+#[test]
+fn key_range_test() {
+    let mut db = TableBase::<DataType>::default();
+    let vec = vec![DataType(0, 0, 0), DataType(1, 1, 1), DataType(2, 2, 2), DataType(3, 3, 3), DataType(4, 4, 4)];
+    db.store_many(&vec);
+    for i in 0..4 {
+        for j in i..4 {
+            assert_eq!(db.key_range(&(i..j)), &vec[i as usize..j as usize]);
+            assert_eq!(db.key_range(&(i..=j)), &vec[i as usize..=j as usize]);
+        }
     }
 }

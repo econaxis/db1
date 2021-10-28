@@ -31,7 +31,6 @@ from_reader!(DataType);
 const STRING_CHECK_SEQ: u16 = 0x72a0;
 impl FromReader for String {
     fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
-
         let mut check_sequence: u16 = 0;
         let mut loc: u64 = 0;
         let mut len: u64 = 0;
@@ -60,17 +59,6 @@ impl BytesSerialize for String {
     }
 }
 
-// impl<T: Sized + FromReader> VariableLength<T> {
-//     pub fn load_value<R: Read + Seek>(&mut self, reader:&mut R) {
-//         match self {
-//             Self::RealValue(_) => {},
-//             Self::Pointer(loc) => {
-//                 reader.seek(SeekFrom::Start(*loc));
-//                 *self = Self::RealValue(T::from_reader_and_heap(reader));
-//             }
-//         }
-//     }
-// }
 
 pub trait QueryableDataType: SuitableDataType + PartialOrd<u64> + PartialEq<u64> {}
 pub trait SuitableDataType: Ord +  Clone + Debug + BytesSerialize + FromReader + 'static {

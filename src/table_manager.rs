@@ -10,7 +10,7 @@ use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::ops::RangeBounds;
 
 use crate::bytes_serializer::{FromReader};
-use crate::chunk_header::ChunkHeader;
+use crate::chunk_header::{ChunkHeader, ChunkHeaderIndex};
 use crate::table_base::TableBase;
 
 use crate::suitable_data_type::{SuitableDataType, QueryableDataType};
@@ -25,7 +25,7 @@ fn setup_logging() {
 // Provides higher level database API's -- automated flushing to disk, query functions for previously flushed chunks
 pub struct TableManager<T: SuitableDataType, Writer: Write + Seek + Read = Cursor<Vec<u8>>> {
     db: TableBase<T>,
-    previous_headers: Vec<(u64, ChunkHeader<T>)>,
+    previous_headers: ChunkHeaderIndex<T>,
     buffer_pool: BufferPool<T>,
     output_stream: Writer,
 }
@@ -36,14 +36,15 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
 
     // Constructs a DbManager instance from a DbBase and an output writer (like a file)
     pub fn new(writer: Writer) -> Self {
-        Self { output_stream: writer, previous_headers: Vec::default(), db: Default::default(), buffer_pool: Default::default() }
+        Self { output_stream: writer, previous_headers: Default::default(), db: Default::default(), buffer_pool: Default::default() }
     }
+
 
     fn check_should_flush(&mut self) {
         if self.db.len() >= Self::FLUSH_CUTOFF {
             let stream_pos = self.output_stream.stream_position().unwrap();
             let (header, _) = self.db.force_flush(&mut self.output_stream);
-            self.previous_headers.push((stream_pos, header));
+            self.previous_headers.push(stream_pos, header);
         }
     }
 
@@ -58,30 +59,12 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
         self.check_should_flush();
         val
     }
-
-    // Filter all chunk headers that can possibly satisfy range, and return their locations in the stream
-    fn chunks_in_range<RB: RangeBounds<u64>>(headers: &[(u64, ChunkHeader<T>)], range: &RB) -> Vec<u64> where T: QueryableDataType {
-        headers.iter().filter_map(|(pos, h)|
-            h.limits.overlaps(range).then(|| *pos)).collect()
-    }
-
-    fn load_page(&mut self, page_loc: u64) -> &mut TableBase<T> {
-        let loader = || {
-            self.output_stream.seek(SeekFrom::Start(page_loc)).unwrap();
-            TableBase::<T>::from_reader_and_heap(&mut self.output_stream, &[])
-        };
-
-        self.buffer_pool.load_page(page_loc, loader)
-    }
-    // Iterate through all the previously flushed chunk headers and look for all tuples contained in range `RB`
-    pub fn get_in_all<RB: RangeBounds<u64>>(&mut self, range: RB) -> Vec<T> where T: QueryableDataType{
-        let ok_chunks = Self::chunks_in_range(&self.previous_headers, &range);
+    pub fn get_in_all<RB: RangeBounds<u64>>(&mut self, range: RB) -> Vec<T> where T: QueryableDataType {
+        let ok_chunks = self.previous_headers.get_in_all(&range);
         let mut cln = BTreeSet::new();
         for pos in ok_chunks {
             let db = self.load_page(pos);
-            let range = db.key_range(&range);
-
-            for j in range {
+            for j in db.key_range(&range) {
                 cln.replace(j.clone());
             }
         };
@@ -94,6 +77,17 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
         cln.into_iter().collect()
     }
 
+    fn load_page(&mut self, page_loc: u64) -> &mut TableBase<T> {
+        let loader = || {
+            self.output_stream.seek(SeekFrom::Start(page_loc)).unwrap();
+            TableBase::<T>::from_reader_and_heap(&mut self.output_stream, &[])
+        };
+
+        self.buffer_pool.load_page(page_loc, loader)
+    }
+
+
+
     #[cfg(test)]
     pub fn get_output_stream_len(&mut self) -> usize {
         self.output_stream.stream_position().unwrap() as usize
@@ -102,7 +96,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     pub fn force_flush(&mut self) {
         let stream_pos = self.output_stream.stream_position().unwrap();
         let (header, _) = self.db.force_flush(&mut self.output_stream);
-        self.previous_headers.push((stream_pos, header));
+        self.previous_headers.push(stream_pos, header);
     }
 }
 

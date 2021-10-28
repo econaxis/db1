@@ -237,28 +237,40 @@ fn test2() {
     }
 }
 
-// #[test]
-// fn test3() {
-//     use rand::{thread_rng, Rng};
-//     use chunk_header::ChunkHeaderIndex;
-//     use suitable_data_type::DataType;
-//
-//     let mut buffer: Vec<u8> = Vec::new();
-//     let mut dbs = Vec::new();
-//     for _i in generate_int_range(0, 150) {
-//         let mut db = TableBase::<DataType>::default();
-//
-//         let mut rng = thread_rng();
-//         for j in 0..10 {
-//             db.store(DataType(j, rng.gen(), rng.gen()));
-//         }
-//         let old_data = db.force_flush(&mut buffer);
-//         dbs.push(old_data);
-//     }
-//
-//     let mut reader = Cursor::new(&buffer);
-//
-//     let res = ChunkHeaderIndex::<DataType>::from_reader_and_heap(&mut reader, std::io::empty());
-//
-//     assert_eq!(res.0.len(), dbs.len());
-// }
+#[test]
+fn test3() {
+    use rand::{thread_rng, Rng};
+    use chunk_header::ChunkHeaderIndex;
+    use suitable_data_type::DataType;
+
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut dbs = Vec::new();
+    for _ in generate_int_range(0, 150) {
+        let mut db = TableBase::<DataType>::default();
+
+        let mut rng = thread_rng();
+        for j in 0..10 {
+            db.store(DataType(j, rng.gen(), rng.gen()));
+        }
+        let old_data = db.force_flush(&mut buffer);
+        dbs.push(old_data);
+    }
+
+    let mut reader = Cursor::new(&buffer);
+
+    let res = ChunkHeaderIndex::<DataType>::from_reader_and_heap(&mut reader, &[]);
+
+    assert_eq!(res.0.len(), dbs.len());
+    assert_eq!(res.0.len(), 150);
+
+
+    fn dt_full_compare(one: &Option<DataType>, two: &Option<DataType>) -> bool {
+        let one = one.as_ref().unwrap();
+        let two = two.as_ref().unwrap();
+        one.0 == two.0 && one.1 == two.1 && one.2 == two.2
+    }
+    for ((_pos, chunk1), (chunk2, _data)) in res.0.iter().zip(dbs.iter()) {
+        assert!(dt_full_compare(&chunk1.limits.min, &chunk2.limits.min));
+        assert!(dt_full_compare(&chunk1.limits.max, &chunk2.limits.max));
+    }
+}
