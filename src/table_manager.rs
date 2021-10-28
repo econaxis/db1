@@ -32,7 +32,7 @@ pub struct TableManager<T: SuitableDataType, Writer: Write + Seek + Read = Curso
 
 impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     // Maximum tuples we can hold in memory. After this amount, we empty to disk.
-    const FLUSH_CUTOFF: usize = 5;
+    const FLUSH_CUTOFF: usize = 50;
 
     // Constructs a DbManager instance from a DbBase and an output writer (like a file)
     pub fn new(writer: Writer) -> Self {
@@ -86,8 +86,14 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
         self.buffer_pool.load_page(page_loc, loader)
     }
 
+    pub fn read_from_file<R: Read>(r: R, output_stream: Writer) -> Self {
+        Self {previous_headers: ChunkHeaderIndex::from_reader_and_heap(r, &[]), db: TableBase::default(), buffer_pool: BufferPool::default(), output_stream}
+    }
 
-
+    #[cfg(test)]
+    pub fn get_prev_headers(&self) -> &ChunkHeaderIndex<T> {
+        &self.previous_headers
+    }
     #[cfg(test)]
     pub fn get_output_stream_len(&mut self) -> usize {
         self.output_stream.stream_position().unwrap() as usize

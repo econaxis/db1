@@ -273,4 +273,10 @@ fn test3() {
         assert!(dt_full_compare(&chunk1.limits.min, &chunk2.limits.min));
         assert!(dt_full_compare(&chunk1.limits.max, &chunk2.limits.max));
     }
+
+    reader.seek(SeekFrom::Start(0)).unwrap();
+    let mut test_out_stream = heap_writer::heap_writer();
+    let tbm = TableManager::<DataType>::read_from_file(reader, test_out_stream);
+    assert_eq!(tbm.get_prev_headers(), &res);
+    dbg!(tbm);
 }

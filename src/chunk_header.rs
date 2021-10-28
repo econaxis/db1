@@ -47,6 +47,7 @@ impl<T: SuitableDataType> FromReader for ChunkHeader<T> {
 
 // Describes a chunk of tuples, such as min/max ranges (for binary searches), size of the tuple, and how many tuples
 // Will be serialized along with the data itself for quicker searches.
+#[derive(PartialEq)]
 #[repr(C)]
 pub struct ChunkHeader<T: SuitableDataType> {
     pub type_size: u32,
@@ -66,8 +67,9 @@ impl<T: SuitableDataType> ChunkHeader<T> {
 
 // todo: refactor table_manager to use chunkheaderindex
 // Represents a collection of ChunkHeaders, along with their location in a file for latter searches
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct ChunkHeaderIndex<T: SuitableDataType>(pub Vec<(u64, ChunkHeader<T>)>);
+
 
 impl<T: SuitableDataType> Default for ChunkHeaderIndex<T> {
     fn default() -> Self {
