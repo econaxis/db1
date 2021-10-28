@@ -23,22 +23,22 @@ fn test_heap_struct() {
         }
     }
     impl PartialEq<u64> for HeapTest {
-        fn eq(&self, other: &u64) -> bool {
+        fn eq(&self, _other: &u64) -> bool {
             todo!()
         }
     }
     impl PartialOrd<u64> for HeapTest {
-        fn partial_cmp(&self, other: &u64) -> Option<Ordering> {
+        fn partial_cmp(&self, _other: &u64) -> Option<Ordering> {
             todo!()
         }
     }
     impl BytesSerialize for HeapTest {
-        fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut data: W, mut heap: W1) {
+        fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, data: W, heap: W1) {
             self.a.serialize_with_heap(data, heap)
         }
     }
     impl FromReader for HeapTest {
-        fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
+        fn from_reader_and_heap<R: Read>(r: R, heap: &[u8]) -> Self {
             Self {a: String::from_reader_and_heap(r, heap)}
         }
     }
@@ -48,11 +48,12 @@ fn test_heap_struct() {
     db.store(HeapTest {a: "fdasfdsa".to_string()});
 
     let mut c = Cursor::new(Vec::new());
-    db.force_flush(&mut c);
+    let (_, result)  = db.force_flush(&mut c);
 
     c.seek(SeekFrom::Start(0)).unwrap();
     let d = TableBase::<HeapTest>::from_reader_and_heap(&mut c, &[]);
-    dbg!(d);
+    assert_eq!(&result, &[HeapTest {a: "abcdef12356".to_string()}, HeapTest {a: "fdasfdsa".to_string()}]);
+    assert_eq!(&result, d.get_data());
 }
 
 #[test]

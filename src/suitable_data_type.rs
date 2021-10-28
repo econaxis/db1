@@ -20,9 +20,9 @@ impl DataType {
 }
 
 use crate::{bytes_serializer, from_reader};
-use std::io::{Write, Read, Seek, SeekFrom};
-use std::fs::read;
-use std::process::Output;
+use std::io::{Write, Read, Seek};
+
+
 use crate::chunk_header::slice_from_type;
 bytes_serializer!(DataType);
 from_reader!(DataType);
@@ -35,13 +35,13 @@ impl FromReader for String {
         let mut check_sequence: u16 = 0;
         let mut loc: u64 = 0;
         let mut len: u64 = 0;
-        r.read_exact(slice_from_type(&mut check_sequence));
-        r.read_exact(slice_from_type(&mut loc));
-        r.read_exact(slice_from_type(&mut len));
+        r.read_exact(slice_from_type(&mut check_sequence)).unwrap();
+        r.read_exact(slice_from_type(&mut loc)).unwrap();
+        r.read_exact(slice_from_type(&mut len)).unwrap();
 
         assert_eq!(check_sequence, STRING_CHECK_SEQ);
 
-        if (loc == 0 && len == 0) || heap == &[] {
+        if (loc == 0 && len == 0) || heap.is_empty() {
             return String::new();
         }
         let buffer_slice = &heap[loc as usize..(loc + len) as usize];

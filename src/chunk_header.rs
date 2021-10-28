@@ -1,5 +1,5 @@
 use std::fmt::{Debug, Formatter};
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, Write};
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
 use crate::range::Range;
@@ -62,6 +62,7 @@ impl<T: SuitableDataType> ChunkHeader<T> {
     }
 }
 
+// todo: refactor table_manager to use chunkheaderindex
 // Represents a collection of ChunkHeaders, along with their location in a file for latter searches
 #[derive(Debug)]
 pub struct ChunkHeaderIndex<T: SuitableDataType>(pub Vec<(ChunkHeader<T>, u64)>);
@@ -70,7 +71,6 @@ impl <T: SuitableDataType> ChunkHeaderIndex<T> {
     fn new() -> Self {
         Self(Vec::new())
     }
-
 }
 //
 // impl <T: SuitableDataType> FromReader for ChunkHeaderIndex<T> {

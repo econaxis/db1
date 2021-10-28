@@ -5,7 +5,7 @@ pub trait FromReader {
 }
 
 pub trait BytesSerialize: Sized {
-    fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut data: W, mut heap: W1) {
+    fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut data: W, _heap: W1) {
         let bytes = unsafe {
             std::slice::from_raw_parts(self as *const Self as *const u8, std::mem::size_of::<Self>())
         };
@@ -25,7 +25,7 @@ macro_rules! bytes_serializer {
 macro_rules! from_reader {
     ($x: ty) => {
         impl crate::bytes_serializer::FromReader for $x {
-            fn from_reader_and_heap<R: Read>(mut r: R, mut data: &[u8]) -> Self {
+            fn from_reader_and_heap<R: Read>(mut r: R, _data: &[u8]) -> Self {
                 let mut buffer = [0u8; std::mem::size_of::<$x>()];
                 r.read_exact(&mut buffer).unwrap();
 

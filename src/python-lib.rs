@@ -84,7 +84,7 @@ unsafe fn raw_ptr_to_slice<'a, T, A: 'a>(ptr: *mut T, _lifetime: &A) -> &'a mut 
 }
 
 impl FromReader for BusStruct {
-    fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
+    fn from_reader_and_heap<R: Read>(mut r: R, _heap: &[u8]) -> Self {
         let mut buf = MaybeUninit::<BusStruct>::uninit();
         let buf_u8 = unsafe { raw_ptr_to_slice(buf.as_mut_ptr(), &buf) };
         r.read_exact(buf_u8).unwrap();

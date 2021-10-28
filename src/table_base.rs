@@ -1,5 +1,5 @@
 use std::fmt::{Debug, Formatter};
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{Cursor, Read, Seek, Write};
 use std::ops::RangeBounds;
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
@@ -10,7 +10,7 @@ use crate::table_manager::assert_no_dups;
 use crate::heap_writer;
 impl<T: Ord + Clone> Default for TableBase<T> {
     fn default() -> Self {
-        Self { limits: Range::new(None), data: Vec::new(), is_sorted: true, heap: Default::default() }
+        Self { limits: Range::new(None), data: Vec::new(), is_sorted: true}
     }
 }
 
@@ -25,7 +25,6 @@ impl<T: PartialEq> PartialEq for TableBase<T> {
 pub struct TableBase<T> {
      data: Vec<T>,
     limits: Range<T>,
-    heap: Vec<u8>,
     is_sorted: bool,
 }
 
@@ -41,7 +40,7 @@ impl<T: SuitableDataType> Debug for TableBase<T> {
 fn read_to_vec<R: Read>(mut r: R, len: usize) -> Vec<u8> {
     let mut buf = Vec::with_capacity(len);
     unsafe {
-        let mut uninit_slice = std::slice::from_raw_parts_mut(buf.as_mut_ptr(), len);
+        let uninit_slice = std::slice::from_raw_parts_mut(buf.as_mut_ptr(), len);
         r.read_exact(uninit_slice).unwrap();
         buf.set_len(len);
     }
@@ -52,18 +51,12 @@ impl<T: SuitableDataType> FromReader for TableBase<T> {
     // Read bytes into a DbBase instance
     fn from_reader_and_heap<R: Read>(mut r: R, _heap: &[u8]) -> Self {
         assert_eq!(_heap, &[]);
-        //todo: add heap offset to chunk header, implement rest of functions, test heap requiring struct
         let chunk_header = ChunkHeader::<T>::from_reader_and_heap(&mut r, _heap);
 
         let mut buf = read_to_vec(&mut r, chunk_header.calculate_total_size());
         let (data, heap_unchecked) = buf.split_at_mut(chunk_header.calculate_heap_offset());
-        let mut heap = heap_writer::check(heap_unchecked);
+        let heap = heap_writer::check(heap_unchecked);
         let mut data_cursor = Cursor::new(data);
-
-        // Sanity checks
-        if !T::REQUIRES_HEAP {
-            assert_eq!(heap.len(), 2);
-        }
 
         let mut db = Self { is_sorted: true, ..Default::default() };
 
