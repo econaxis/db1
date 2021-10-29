@@ -1,11 +1,11 @@
 use std::collections::Bound;
 use std::fmt::{Debug, Formatter};
-use std::io::{Read, Write, Seek};
+use std::io::{Read, Seek, Write};
 use std::ops::RangeBounds;
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
-use crate::suitable_data_type::{SuitableDataType, QueryableDataType};
 use crate::chunk_header::slice_from_type;
+use crate::suitable_data_type::{QueryableDataType, SuitableDataType};
 
 const CHECK_SEQUENCE: u16 = 22859;
 

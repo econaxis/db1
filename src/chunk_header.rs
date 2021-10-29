@@ -1,11 +1,10 @@
 use std::fmt::{Debug, Formatter};
-use std::io::{Read, Seek, Write, Cursor, SeekFrom};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::ops::RangeBounds;
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
 use crate::range::Range;
-use crate::suitable_data_type::{SuitableDataType, QueryableDataType};
-use std::ops::RangeBounds;
-use std::collections::BTreeSet;
+use crate::{QueryableDataType, SuitableDataType};
 
 const CH_CHECK_SEQUENCE: u32 = 0x32aa8429;
 

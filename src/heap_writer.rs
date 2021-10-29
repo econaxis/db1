@@ -2,7 +2,7 @@ use std::io::{Cursor, Write};
 
 const CHECK_SEQUENCE: u16 = 54593;
 
-pub fn heap_writer() -> Cursor<Vec<u8>> {
+pub fn default_mem_writer() -> Cursor<Vec<u8>> {
     let mut s = Cursor::new(Vec::new());
     s.write_all(&CHECK_SEQUENCE.to_le_bytes()).unwrap();
     s

@@ -1,6 +1,4 @@
-// todo: compression, secondary indexes, heap
-
-
+// todo: compression, secondary indexes
 
 use std::cmp::Ordering;
 use std::collections::{BTreeSet};
@@ -10,11 +8,12 @@ use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::ops::RangeBounds;
 
 use crate::bytes_serializer::{FromReader};
-use crate::chunk_header::{ChunkHeader, ChunkHeaderIndex};
+use crate::chunk_header::{ChunkHeaderIndex};
 use crate::table_base::TableBase;
 
 use crate::suitable_data_type::{SuitableDataType, QueryableDataType};
 use crate::buffer_pool::BufferPool;
+use crate::heap_writer::default_mem_writer;
 
 #[allow(unused)]
 fn setup_logging() {
@@ -40,6 +39,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     }
 
 
+    // Check if exceeded in memory capacity and write to disk
     fn check_should_flush(&mut self) {
         if self.db.len() >= Self::FLUSH_CUTOFF {
             let stream_pos = self.output_stream.stream_position().unwrap();
@@ -86,8 +86,10 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
         self.buffer_pool.load_page(page_loc, loader)
     }
 
+    // Constructs instance of database from a file generated previously.
+    // Binary format should be consecutive array of DbBase flushes.
     pub fn read_from_file<R: Read>(r: R, output_stream: Writer) -> Self {
-        Self {previous_headers: ChunkHeaderIndex::from_reader_and_heap(r, &[]), db: TableBase::default(), buffer_pool: BufferPool::default(), output_stream}
+        Self { previous_headers: ChunkHeaderIndex::from_reader_and_heap(r, &[]), db: TableBase::default(), buffer_pool: BufferPool::default(), output_stream }
     }
 
     #[cfg(test)]
@@ -118,7 +120,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> Debug for TableManager<T,
 impl<T: SuitableDataType> Default for TableManager<T> {
     fn default() -> Self {
         let db = TableBase::default();
-        Self { db, output_stream: Cursor::new(Vec::new()), buffer_pool: Default::default(), previous_headers: Default::default() }
+        Self { db, output_stream: default_mem_writer(), buffer_pool: Default::default(), previous_headers: Default::default() }
     }
 }
 

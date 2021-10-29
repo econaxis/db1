@@ -16,12 +16,11 @@ use std::mem::MaybeUninit;
 use cpython::{PyBytes, PyDict, PyList, PyObject, PyResult, Python, PythonObject, ToPyObject};
 use cpython::{py_fn, py_module_initializer};
 
-pub use table_manager::TableManager;
 pub use range::Range;
 
-use crate::bytes_serializer::{BytesSerialize, FromReader};
+pub use crate::bytes_serializer::{BytesSerialize, FromReader};
 
-use crate::suitable_data_type::{SuitableDataType, QueryableDataType};
+pub use crate::suitable_data_type::{SuitableDataType, QueryableDataType};
 use std::fs::File;
 
 mod bytes_serializer;
@@ -35,6 +34,9 @@ mod buffer_pool;
 mod heap_writer;
 
 pub use suitable_data_type::DataType;
+pub use chunk_header::{ChunkHeader, ChunkHeaderIndex};
+pub use table_manager::TableManager;
+pub use table_base::TableBase;
 
 #[repr(C)]
 #[derive(Debug, Clone)]

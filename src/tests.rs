@@ -275,8 +275,39 @@ fn test3() {
     }
 
     reader.seek(SeekFrom::Start(0)).unwrap();
-    let mut test_out_stream = heap_writer::heap_writer();
+    let test_out_stream = heap_writer::default_mem_writer();
     let tbm = TableManager::<DataType>::read_from_file(reader, test_out_stream);
     assert_eq!(tbm.get_prev_headers(), &res);
     dbg!(tbm);
+}
+
+
+fn rand_range(max: u8) -> u8 {
+    rand::random::<u8>() % max
+}
+
+#[test]
+fn test_edits_valid() {
+    const LENGTH: u8 = 255;
+    let mut possible_values = [0u8; LENGTH as usize];
+    let mut dbm = TableManager::<DataType>::default();
+
+    for i in 0..possible_values.len() {
+        let i = i as u8;
+        dbm.store(DataType(i, 0, 0));
+    }
+    for _ in 0..10000 {
+        let new_value = DataType(rand_range(LENGTH),rand_range(LENGTH), 0);
+        possible_values[new_value.0 as usize] = new_value.1;
+        dbm.store_and_replace(new_value);
+    }
+
+    for (index, i) in possible_values.iter().enumerate() {
+        let index = index as u64;
+        let val = dbm.get_in_all(index..=index);
+        match val.as_slice() {
+            [a] => {assert_eq!(a.1, *i)}
+            _ => panic!()
+        }
+    }
 }

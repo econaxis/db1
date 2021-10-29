@@ -2,13 +2,10 @@ use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, Write};
 use std::ops::RangeBounds;
 
-use crate::bytes_serializer::{BytesSerialize, FromReader};
-use crate::chunk_header::{ChunkHeader, ChunkHeaderIndex};
-use crate::{Range, DataType};
-use crate::suitable_data_type::{QueryableDataType, SuitableDataType};
-use crate::table_manager::assert_no_dups;
+use crate::{DataType, Range, BytesSerialize, FromReader, QueryableDataType, SuitableDataType, ChunkHeader};
 use crate::heap_writer;
-
+use crate::table_manager::assert_no_dups;
+use crate::heap_writer::default_mem_writer;
 
 impl<T: Ord + Clone> Default for TableBase<T> {
     fn default() -> Self {
@@ -24,6 +21,7 @@ impl<T: PartialEq> PartialEq for TableBase<T> {
 
 
 // Raw database instance for storing data, getting min/max of data, and querying data.
+// Only in-memory operations supported.
 pub struct TableBase<T> {
     data: Vec<T>,
     limits: Range<T>,
@@ -51,8 +49,6 @@ fn read_to_vec<R: Read>(mut r: R, len: usize) -> Vec<u8> {
 }
 
 impl<T: SuitableDataType> FromReader for TableBase<T> {
-    // Read bytes into a DbBase instance
-
     fn from_reader_and_heap<R: Read>(mut r: R, _heap: &[u8]) -> Self {
         assert_eq!(_heap.len(), 0);
         let chunk_header = ChunkHeader::<T>::from_reader_and_heap(&mut r, _heap);
@@ -71,10 +67,6 @@ impl<T: SuitableDataType> FromReader for TableBase<T> {
 
         db
     }
-}
-
-fn empty_writer() -> Cursor<Vec<u8>> {
-    Cursor::default()
 }
 
 #[cfg(test)]
@@ -138,13 +130,13 @@ impl<T: SuitableDataType> TableBase<T> {
         assert!(!self.data.is_empty());
         debug_assert!(assert_no_dups(&self.data));
 
-        let mut heap = heap_writer::heap_writer();
-        let mut data = empty_writer();
+        let mut heap = heap_writer::default_mem_writer();
+        let mut data = default_mem_writer();
         self.data.iter().for_each(|a| a.serialize_with_heap(&mut data, &mut heap));
 
         let header = self.get_chunk_header(heap.stream_position().unwrap());
 
-        header.serialize_with_heap(&mut w, empty_writer());
+        header.serialize_with_heap(&mut w, default_mem_writer());
 
         w.write_all(&data.into_inner()).unwrap();
         w.write_all(&heap.into_inner()).unwrap();
