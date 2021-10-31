@@ -92,8 +92,10 @@ impl<T: SuitableDataType> TableBase<T> {
         self.data.sort_by(|a, b| a.partial_cmp(b).unwrap())
     }
 
+
     // Store tuple into self
     pub(crate) fn store(&mut self, t: T) {
+        debug_assert!(self.data.iter().find(|x| x == &&t).is_none());
         self.limits.add(&t);
         self.data.push(t);
         self.is_sorted = false;
@@ -101,7 +103,7 @@ impl<T: SuitableDataType> TableBase<T> {
 
 
     pub(crate) fn store_and_replace(&mut self, t: T) -> Option<T> {
-        if let Some(found) = self.data.iter_mut().find(|x| **x == t) {
+        if let Some(found) = self.data.iter_mut().find(|x| x == &&t) {
             Some(std::mem::replace(found, t))
         } else {
             self.store(t);
@@ -125,12 +127,12 @@ impl<T: SuitableDataType> TableBase<T> {
     // We have to serialize to data + heap first (in a separate buffer), so we can calculate the data length and heap offset.
     // Then, we put data length + heap offset into the header and serialize that.
 
-    pub(crate) fn force_flush<W: Write>(&mut self, mut w: W) -> (ChunkHeader<T>, Vec<T>) {
+    pub(crate) fn force_flush<W: Write>(mut self, mut w: W) -> (ChunkHeader<T>, Vec<T>) {
         self.sort_self();
         assert!(!self.data.is_empty());
         debug_assert!(assert_no_dups(&self.data));
 
-        let mut heap = heap_writer::default_mem_writer();
+        let mut heap = heap_writer::default_heap_writer();
         let mut data = default_mem_writer();
         self.data.iter().for_each(|a| a.serialize_with_heap(&mut data, &mut heap));
 
@@ -144,7 +146,7 @@ impl<T: SuitableDataType> TableBase<T> {
         let vec = std::mem::take(&mut self.data);
 
         // Reset self
-        *self = Self::default();
+        // *self = Self::default();
         (header, vec)
     }
 }

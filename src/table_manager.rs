@@ -14,6 +14,7 @@ use crate::table_base::TableBase;
 use crate::suitable_data_type::{SuitableDataType, QueryableDataType};
 use crate::buffer_pool::BufferPool;
 use crate::heap_writer::default_mem_writer;
+use crate::ChunkHeader;
 
 #[allow(unused)]
 fn setup_logging() {
@@ -31,7 +32,7 @@ pub struct TableManager<T: SuitableDataType, Writer: Write + Seek + Read = Curso
 
 impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     // Maximum tuples we can hold in memory. After this amount, we empty to disk.
-    const FLUSH_CUTOFF: usize = 50;
+    pub const FLUSH_CUTOFF: usize = 100;
 
     // Constructs a DbManager instance from a DbBase and an output writer (like a file)
     pub fn new(writer: Writer) -> Self {
@@ -43,7 +44,8 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     fn check_should_flush(&mut self) {
         if self.db.len() >= Self::FLUSH_CUTOFF {
             let stream_pos = self.output_stream.stream_position().unwrap();
-            let (header, _) = self.db.force_flush(&mut self.output_stream);
+            let db = std::mem::take(&mut self.db);
+            let (header, _) = db.force_flush(&mut self.output_stream);
             self.previous_headers.push(stream_pos, header);
         }
     }
@@ -101,10 +103,16 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
         self.output_stream.stream_position().unwrap() as usize
     }
     #[cfg(test)]
-    pub fn force_flush(&mut self) {
+    pub fn get_data(&self) -> &Vec<T> {
+        self.db.get_data()
+    }
+    #[cfg(test)]
+    pub fn force_flush(&mut self) -> (ChunkHeader<T>, Vec<T>) {
         let stream_pos = self.output_stream.stream_position().unwrap();
-        let (header, _) = self.db.force_flush(&mut self.output_stream);
-        self.previous_headers.push(stream_pos, header);
+        let db = std::mem::take(&mut self.db);
+        let (header, res) = db.force_flush(&mut self.output_stream);
+        self.previous_headers.push(stream_pos, header.clone());
+        (header, res)
     }
 }
 

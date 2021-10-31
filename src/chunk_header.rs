@@ -46,7 +46,7 @@ impl<T: SuitableDataType> FromReader for ChunkHeader<T> {
 
 // Describes a chunk of tuples, such as min/max ranges (for binary searches), size of the tuple, and how many tuples
 // Will be serialized along with the data itself for quicker searches.
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 #[repr(C)]
 pub struct ChunkHeader<T: SuitableDataType> {
     pub type_size: u32,
