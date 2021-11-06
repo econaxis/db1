@@ -12,11 +12,16 @@ const CHECK_SEQUENCE: u16 = 22859;
 impl<T: SuitableDataType> BytesSerialize for Range<T> {
     fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut w: W, mut _heap: W1) {
         w.write_all(&CHECK_SEQUENCE.to_le_bytes()).unwrap();
-        self.min.as_ref().unwrap().serialize_with_heap(&mut w, &mut _heap);
-        self.max.as_ref().unwrap().serialize_with_heap(w, &mut _heap);
+        self.min
+            .as_ref()
+            .unwrap()
+            .serialize_with_heap(&mut w, &mut _heap);
+        self.max
+            .as_ref()
+            .unwrap()
+            .serialize_with_heap(w, &mut _heap);
     }
 }
-
 
 #[derive(Clone, PartialEq)]
 pub struct Range<T> {
@@ -26,13 +31,20 @@ pub struct Range<T> {
 
 impl<T: Ord + Clone> Range<T> {
     pub fn new(init: Option<T>) -> Self {
-        Self { min: init.clone(), max: init }
+        Self {
+            min: init.clone(),
+            max: init,
+        }
     }
     // Returns comp(lhs, rhs) if both are defined value, else returns True
-    fn check_else_true<A, F: FnOnce(A, A) -> bool>(lhs: Option<A>, rhs: Option<A>, comp: F) -> bool {
+    fn check_else_true<A, F: FnOnce(A, A) -> bool>(
+        lhs: Option<A>,
+        rhs: Option<A>,
+        comp: F,
+    ) -> bool {
         match lhs.is_some() && rhs.is_some() {
             false => true,
-            true => comp(lhs.unwrap(), rhs.unwrap())
+            true => comp(lhs.unwrap(), rhs.unwrap()),
         }
     }
 
@@ -54,10 +66,12 @@ impl<T: SuitableDataType> FromReader for Range<T> {
         assert_eq!(check, CHECK_SEQUENCE);
         let min = T::from_reader_and_heap(&mut r, heap);
         let max = T::from_reader_and_heap(&mut r, heap);
-        Self { min: Some(min), max: Some(max) }
+        Self {
+            min: Some(min),
+            max: Some(max),
+        }
     }
 }
-
 
 impl<T: QueryableDataType> Range<T> {
     pub fn overlaps<RB: RangeBounds<u64>>(&self, rb: &RB) -> bool {
@@ -66,17 +80,17 @@ impl<T: QueryableDataType> Range<T> {
                 let min_in = match rb.start_bound() {
                     Bound::Included(start) => max >= start,
                     Bound::Excluded(start) => max > start,
-                    Bound::Unbounded => true
+                    Bound::Unbounded => true,
                 };
                 let max_in = match rb.end_bound() {
                     Bound::Included(end) => min <= end,
                     Bound::Excluded(end) => min < end,
-                    Bound::Unbounded => true
+                    Bound::Unbounded => true,
                 };
 
                 max_in && min_in
             }
-            _ => panic!("Must not be None to compare")
+            _ => panic!("Must not be None to compare"),
         }
     }
 }

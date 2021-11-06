@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::table_base::TableBase;
 use crate::suitable_data_type::SuitableDataType;
+use crate::table_base::TableBase;
 use std::iter::FromIterator;
 
 pub struct BufferPool<T: SuitableDataType> {
@@ -14,16 +14,26 @@ pub struct BufferPool<T: SuitableDataType> {
 
 impl<T: SuitableDataType> Default for BufferPool<T> {
     fn default() -> Self {
-        Self { lru: Default::default(), buffer_pool: Default::default() }
+        Self {
+            lru: Default::default(),
+            buffer_pool: Default::default(),
+        }
     }
 }
 
 impl<T: SuitableDataType> BufferPool<T> {
     const MAX_BUFFERPOOL_SIZE: usize = 10;
 
-    pub fn load_page<Loader: FnOnce() -> TableBase<T>>(&mut self, location: u64, loader: Loader) -> &mut TableBase<T> {
+    pub fn load_page<Loader: FnOnce() -> TableBase<T>>(
+        &mut self,
+        location: u64,
+        loader: Loader,
+    ) -> &mut TableBase<T> {
         self.evict_if_necessary();
-        self.lru.entry(location).and_modify(|e| { *e += 1 }).or_insert(1);
+        self.lru
+            .entry(location)
+            .and_modify(|e| *e += 1)
+            .or_insert(1);
         self.buffer_pool.entry(location).or_insert_with(loader)
     }
 
@@ -44,11 +54,10 @@ impl<T: SuitableDataType> BufferPool<T> {
     }
 }
 
-
 #[cfg(test)]
 mod test {
-    use crate::*;
     use super::*;
+    use crate::*;
 
     fn default_loader() -> TableBase<DataType> {
         TableBase::<DataType>::default()

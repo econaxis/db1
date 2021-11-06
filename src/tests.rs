@@ -1,24 +1,27 @@
 #![cfg(test)]
 
-use std::io::{Cursor, Write, Seek, SeekFrom};
-use std::ops::{Range as stdRange};
+use crate::suitable_data_type::DataType;
+use crate::table_base::TableBase;
 use crate::*;
-use crate::suitable_data_type::{DataType};
+use rand::distributions::Alphanumeric;
+use rand::prelude::SliceRandom;
 use rand::{random, Rng};
 use std::fs::File;
-use rand::prelude::SliceRandom;
-use crate::table_base::TableBase;
-use rand::distributions::Alphanumeric;
-
+use std::io::{Cursor, Seek, SeekFrom, Write};
+use std::ops::Range as stdRange;
 
 fn rand_string(len: usize) -> String {
-    rand::thread_rng().sample_iter(Alphanumeric).take(len).map(char::from).collect()
+    rand::thread_rng()
+        .sample_iter(Alphanumeric)
+        .take(len)
+        .map(char::from)
+        .collect()
 }
 #[test]
 fn test_heap_struct() {
     #[derive(PartialEq, PartialOrd, Eq, Ord, Clone, Debug)]
     struct HeapTest {
-        a: String
+        a: String,
     }
     impl SuitableDataType for HeapTest {
         const REQUIRES_HEAP: bool = true;
@@ -34,7 +37,9 @@ fn test_heap_struct() {
     }
     impl FromReader for HeapTest {
         fn from_reader_and_heap<R: Read>(r: R, heap: &[u8]) -> Self {
-            Self {a: String::from_reader_and_heap(r, heap)}
+            Self {
+                a: String::from_reader_and_heap(r, heap),
+            }
         }
     }
 
@@ -42,7 +47,9 @@ fn test_heap_struct() {
 
     let mut s = Vec::new();
     for _ in 0..100 {
-        let val = HeapTest {a: rand_string(rand::thread_rng().gen_range(0..10000))};
+        let val = HeapTest {
+            a: rand_string(rand::thread_rng().gen_range(0..10000)),
+        };
         db.store_and_replace(val.clone());
         if s.iter().find(|a| &&val == a) == None {
             s.push(val);
@@ -51,7 +58,7 @@ fn test_heap_struct() {
     s.sort();
 
     let mut c = Cursor::new(Vec::new());
-    let (_, result)  = db.force_flush(&mut c);
+    let (_, result) = db.force_flush(&mut c);
     assert_eq!(&result, s.as_slice());
 
     c.seek(SeekFrom::Start(0)).unwrap();
@@ -72,11 +79,15 @@ fn test_editable() {
 
 #[test]
 fn test_works_with_std_file() {
-    let file = File::with_options().create(true).read(true).write(true).open("/tmp/test.db").unwrap();
+    let file = File::with_options()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open("/tmp/test.db")
+        .unwrap();
     let db = TableManager::new(file);
     run_test_with_db(db);
 }
-
 
 #[test]
 fn test_crash_in_middle() {
@@ -93,9 +104,12 @@ fn test_crash_in_middle() {
         if Some(&db.get_output_stream_len()) != last_lens.last() {
             last_lens.push(db.get_output_stream_len() as usize);
         }
-    };
+    }
     println!("Last lens {}", last_lens.len());
-    assert!(last_lens.len() >= 10, "Number of different chunks must be larger than 10 for test to be effective");
+    assert!(
+        last_lens.len() >= 10,
+        "Number of different chunks must be larger than 10 for test to be effective"
+    );
     std::mem::drop(db);
     let mut tuples = 0;
     for j in last_lens {
@@ -116,7 +130,10 @@ fn test_crash_in_middle() {
 
 #[test]
 fn test_range() {
-    let test_range = Range { min: Some(DataType(3, 3, 3)), max: Some(DataType(10, 10, 10)) };
+    let test_range = Range {
+        min: Some(DataType(3, 3, 3)),
+        max: Some(DataType(10, 10, 10)),
+    };
     assert!(!test_range.overlaps(&(15..20)));
     assert!(test_range.overlaps(&(7..20)));
 }
@@ -137,7 +154,13 @@ fn test_all_findable() {
             let range = j.first()..=j1.first();
             let mut res = dbm.get_in_all(j.first()..=j1.first());
             res.sort();
-            assert_eq!(res, solutions.iter().filter_map(|a| range.contains(&a.first()).then(|| a.clone())).collect::<Vec<_>>());
+            assert_eq!(
+                res,
+                solutions
+                    .iter()
+                    .filter_map(|a| range.contains(&a.first()).then(|| a.clone()))
+                    .collect::<Vec<_>>()
+            );
         }
     }
 }
@@ -148,9 +171,11 @@ fn test_db_manager_vecu8() {
     run_test_with_db(dbm);
 }
 
-
 // Generate Vec of unique, random integers in range [min, max)
-fn generate_int_range<T>(min: T, max: T) -> Vec<T> where stdRange<T>: Iterator<Item=T> {
+fn generate_int_range<T>(min: T, max: T) -> Vec<T>
+where
+    stdRange<T>: Iterator<Item = T>,
+{
     let mut vec: Vec<_> = (min..max).collect();
     vec.shuffle(&mut rand::thread_rng());
     vec
@@ -192,7 +217,7 @@ fn test_key_lookup() {
 
 #[test]
 fn test1() {
-    use rand::{thread_rng};
+    use rand::thread_rng;
     use suitable_data_type::DataType;
     let mut db = TableBase::<DataType>::default();
 
@@ -215,8 +240,8 @@ fn test1() {
 #[test]
 fn test2() {
     use rand::{thread_rng, Rng};
-    use suitable_data_type::DataType;
     use std::io::Cursor;
+    use suitable_data_type::DataType;
 
     let mut buffer: Vec<u8> = Vec::new();
     let mut dbs = Vec::new();
@@ -233,7 +258,6 @@ fn test2() {
 
     let mut reader = Cursor::new(&buffer);
 
-
     for d in dbs {
         let db1 = TableBase::<DataType>::from_reader_and_heap(&mut reader, &[]);
         assert_eq!(&d, db1.get_data());
@@ -242,8 +266,8 @@ fn test2() {
 
 #[test]
 fn test3() {
-    use rand::{thread_rng, Rng};
     use chunk_header::ChunkHeaderIndex;
+    use rand::{thread_rng, Rng};
     use suitable_data_type::DataType;
 
     let mut buffer: Vec<u8> = Vec::new();
@@ -266,7 +290,6 @@ fn test3() {
     assert_eq!(res.0.len(), dbs.len());
     assert_eq!(res.0.len(), 150);
 
-
     fn dt_full_compare(one: &Option<DataType>, two: &Option<DataType>) -> bool {
         let one = one.as_ref().unwrap();
         let two = two.as_ref().unwrap();
@@ -284,7 +307,6 @@ fn test3() {
     dbg!(tbm);
 }
 
-
 fn rand_range(max: u8) -> u8 {
     rand::random::<u8>() % max
 }
@@ -300,7 +322,7 @@ fn test_edits_valid() {
         dbm.store(DataType(i, 0, 0));
     }
     for _ in 0..10000 {
-        let new_value = DataType(rand_range(LENGTH),rand_range(LENGTH), 0);
+        let new_value = DataType(rand_range(LENGTH), rand_range(LENGTH), 0);
         possible_values[new_value.0 as usize] = new_value.1;
         dbm.store_and_replace(new_value);
     }
@@ -309,8 +331,10 @@ fn test_edits_valid() {
         let index = index as u64;
         let val = dbm.get_in_all(index..=index);
         match val.as_slice() {
-            [a] => {assert_eq!(a.1, *i)}
-            _ => panic!()
+            [a] => {
+                assert_eq!(a.1, *i)
+            }
+            _ => panic!(),
         }
     }
 }

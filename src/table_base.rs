@@ -2,14 +2,20 @@ use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, Write};
 use std::ops::RangeBounds;
 
-use crate::{DataType, Range, BytesSerialize, FromReader, QueryableDataType, SuitableDataType, ChunkHeader};
 use crate::heap_writer;
-use crate::table_manager::assert_no_dups;
 use crate::heap_writer::default_mem_writer;
+use crate::table_manager::assert_no_dups;
+use crate::{
+    BytesSerialize, ChunkHeader, DataType, FromReader, QueryableDataType, Range, SuitableDataType,
+};
 
 impl<T: Ord + Clone> Default for TableBase<T> {
     fn default() -> Self {
-        Self { limits: Range::new(None), data: Vec::new(), is_sorted: true }
+        Self {
+            limits: Range::new(None),
+            data: Vec::new(),
+            is_sorted: true,
+        }
     }
 }
 
@@ -18,7 +24,6 @@ impl<T: PartialEq> PartialEq for TableBase<T> {
         self.data.eq(&other.data)
     }
 }
-
 
 // Raw database instance for storing data, getting min/max of data, and querying data.
 // Only in-memory operations supported.
@@ -36,7 +41,6 @@ impl<T: SuitableDataType> Debug for TableBase<T> {
             .finish()
     }
 }
-
 
 fn read_to_vec<R: Read>(mut r: R, len: usize) -> Vec<u8> {
     let mut buf = Vec::with_capacity(len);
@@ -58,7 +62,10 @@ impl<T: SuitableDataType> FromReader for TableBase<T> {
         let heap = heap_writer::check(heap_unchecked);
         let mut data_cursor = Cursor::new(data);
 
-        let mut db = Self { is_sorted: true, ..Default::default() };
+        let mut db = Self {
+            is_sorted: true,
+            ..Default::default()
+        };
 
         for _ in 0..chunk_header.length {
             let val = T::from_reader_and_heap(&mut data_cursor, heap);
@@ -92,7 +99,6 @@ impl<T: SuitableDataType> TableBase<T> {
         self.data.sort_by(|a, b| a.partial_cmp(b).unwrap())
     }
 
-
     // Store tuple into self
     pub(crate) fn store(&mut self, t: T) {
         debug_assert!(self.data.iter().find(|x| x == &&t).is_none());
@@ -100,7 +106,6 @@ impl<T: SuitableDataType> TableBase<T> {
         self.data.push(t);
         self.is_sorted = false;
     }
-
 
     pub(crate) fn store_and_replace(&mut self, t: T) -> Option<T> {
         if let Some(found) = self.data.iter_mut().find(|x| x == &&t) {
@@ -134,7 +139,9 @@ impl<T: SuitableDataType> TableBase<T> {
 
         let mut heap = heap_writer::default_heap_writer();
         let mut data = default_mem_writer();
-        self.data.iter().for_each(|a| a.serialize_with_heap(&mut data, &mut heap));
+        self.data
+            .iter()
+            .for_each(|a| a.serialize_with_heap(&mut data, &mut heap));
 
         let header = self.get_chunk_header(heap.stream_position().unwrap());
 
@@ -145,8 +152,6 @@ impl<T: SuitableDataType> TableBase<T> {
         w.flush().unwrap();
         let vec = std::mem::take(&mut self.data);
 
-        // Reset self
-        // *self = Self::default();
         (header, vec)
     }
 }
@@ -164,12 +169,12 @@ impl<T: QueryableDataType> TableBase<T> {
         let start_idx = self.data.partition_point(|a| match range.start_bound() {
             Included(x) => a < x,
             Excluded(x) => a <= x,
-            Unbounded => false
+            Unbounded => false,
         });
         let end_idx = self.data.partition_point(|a| match range.end_bound() {
             Included(x) => a <= x,
             Excluded(x) => a < x,
-            Unbounded => true
+            Unbounded => true,
         });
         assert!(start_idx <= end_idx);
         self.data.get(start_idx..end_idx).unwrap()
@@ -179,7 +184,13 @@ impl<T: QueryableDataType> TableBase<T> {
 #[test]
 fn key_range_test() {
     let mut db = TableBase::<DataType>::default();
-    let vec = vec![DataType(0, 0, 0), DataType(1, 1, 1), DataType(2, 2, 2), DataType(3, 3, 3), DataType(4, 4, 4)];
+    let vec = vec![
+        DataType(0, 0, 0),
+        DataType(1, 1, 1),
+        DataType(2, 2, 2),
+        DataType(3, 3, 3),
+        DataType(4, 4, 4),
+    ];
     db.store_many(&vec);
     for i in 0..4 {
         for j in i..4 {

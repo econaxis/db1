@@ -1,4 +1,4 @@
-use std::cmp::{Ordering, Ord};
+use std::cmp::{Ord, Ordering};
 use std::fmt::{Debug, Formatter};
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
@@ -20,13 +20,11 @@ impl DataType {
 }
 
 use crate::{bytes_serializer, from_reader};
-use std::io::{Write, Read, Seek};
-
+use std::io::{Read, Seek, Write};
 
 use crate::chunk_header::slice_from_type;
 bytes_serializer!(DataType);
 from_reader!(DataType);
-
 
 const STRING_CHECK_SEQ: u16 = 0x72a0;
 impl FromReader for String {
@@ -49,7 +47,7 @@ impl FromReader for String {
 }
 
 impl BytesSerialize for String {
-    fn serialize_with_heap<W: Write, W1: Write + Seek> (&self, mut data: W, mut heap: W1) {
+    fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut data: W, mut heap: W1) {
         let slice = self.as_bytes();
         let heap_position = heap.stream_position().unwrap();
         data.write_all(&STRING_CHECK_SEQ.to_le_bytes()).unwrap();
@@ -59,9 +57,8 @@ impl BytesSerialize for String {
     }
 }
 
-
 pub trait QueryableDataType: SuitableDataType + PartialOrd<u64> + PartialEq<u64> {}
-pub trait SuitableDataType: Ord +  Clone + Debug + BytesSerialize + FromReader + 'static {
+pub trait SuitableDataType: Ord + Clone + Debug + BytesSerialize + FromReader + 'static {
     const REQUIRES_HEAP: bool = false;
     const TYPE_SIZE: u64 = std::mem::size_of::<Self>() as u64;
     // Get the primary key that will be used for comparisons, sorting, and duplicate checks.
@@ -77,38 +74,35 @@ impl QueryableDataType for DataType {}
 #[macro_export]
 macro_rules! gen_suitable_data_type_impls {
     ($t:ty) => {
+        impl PartialOrd<u64> for $t {
+            fn partial_cmp(&self, other: &u64) -> Option<Ordering> {
+                self.first().partial_cmp(&(*other))
+            }
+        }
 
-impl PartialOrd<u64> for $t {
-    fn partial_cmp(&self, other: &u64) -> Option<Ordering> {
-        self.first().partial_cmp(&(*other))
-    }
-}
+        impl Eq for $t {}
 
-impl Eq for $t {}
+        impl PartialOrd for $t {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                self.partial_cmp(&(other.first() as u64))
+            }
+        }
+        impl Ord for $t {
+            fn cmp(&self, other: &Self) -> Ordering {
+                self.partial_cmp(other).unwrap()
+            }
+        }
 
-impl PartialOrd for $t {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.partial_cmp(&(other.first() as u64))
-    }
-}
-impl Ord for $t {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap()
-    }
-}
-
-impl PartialEq<u64> for $t {
-    fn eq(&self, other: &u64) -> bool {
-        self.first().eq(&(*other as u64))
-    }
-}
-impl PartialEq for $t {
-    fn eq(&self, other: &Self) -> bool {
-        self.eq(&(other.first()))
-    }
-}
-
-
+        impl PartialEq<u64> for $t {
+            fn eq(&self, other: &u64) -> bool {
+                self.first().eq(&(*other as u64))
+            }
+        }
+        impl PartialEq for $t {
+            fn eq(&self, other: &Self) -> bool {
+                self.eq(&(other.first()))
+            }
+        }
     };
 }
 

@@ -16,4 +16,3 @@ pub fn check(unchecked: &[u8]) -> &[u8] {
     assert_eq!(unchecked[0..2], CHECK_SEQUENCE.to_le_bytes());
     unchecked
 }
-
