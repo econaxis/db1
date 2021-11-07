@@ -31,6 +31,7 @@ mod suitable_data_type;
 mod table_base;
 mod table_manager;
 mod tests;
+mod db1_string;
 
 pub use chunk_header::{ChunkHeader, ChunkHeaderIndex};
 pub use suitable_data_type::DataType;

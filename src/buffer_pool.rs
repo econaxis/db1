@@ -5,9 +5,9 @@ use crate::table_base::TableBase;
 use std::iter::FromIterator;
 
 pub struct BufferPool<T: SuitableDataType> {
-    // Maps from location -> number of uses since last eviction
-    lru: HashMap<u64, u32>,
-
+    // Maps from location -> last use time
+    last_use: HashMap<u64, u64>,
+    time: u64,
     // Maps from location -> actual in-memory database
     buffer_pool: HashMap<u64, TableBase<T>>,
 }
@@ -15,8 +15,9 @@ pub struct BufferPool<T: SuitableDataType> {
 impl<T: SuitableDataType> Default for BufferPool<T> {
     fn default() -> Self {
         Self {
-            lru: Default::default(),
+            last_use: Default::default(),
             buffer_pool: Default::default(),
+            time: 0
         }
     }
 }
@@ -29,22 +30,25 @@ impl<T: SuitableDataType> BufferPool<T> {
         location: u64,
         loader: Loader,
     ) -> &mut TableBase<T> {
+        self.time+=1;
         self.evict_if_necessary();
-        self.lru
-            .entry(location)
-            .and_modify(|e| *e += 1)
-            .or_insert(1);
-        self.buffer_pool.entry(location).or_insert_with(loader)
+        self.last_use
+            .insert(location, self.time);
+        self.buffer_pool.entry(location).or_insert_with(|| {
+            log::debug!("Loading buffer pool {}", location);
+            loader()
+        })
     }
 
     pub fn evict_if_necessary(&mut self) {
         if self.buffer_pool.len() > Self::MAX_BUFFERPOOL_SIZE {
-            // Find least recently used items
-            let mut lru = Vec::from_iter(self.lru.iter().map(|(a, b)| (*a, *b)));
+            // Find least recently used itemstable_ma
+            let mut lru = Vec::from_iter(self.last_use.iter().map(|(a, b)| (*a, *b)));
             lru.sort_by_key(|(_loc, uses)| *uses);
             for (loc_to_remove, _) in lru {
                 if self.buffer_pool.len() > Self::MAX_BUFFERPOOL_SIZE {
-                    self.lru.remove(&loc_to_remove);
+                    log::debug!("Unloading buffer pool {}", loc_to_remove);
+                    self.last_use.remove(&loc_to_remove);
                     self.buffer_pool.remove(&loc_to_remove);
                 } else {
                     break;

@@ -7,14 +7,16 @@ use std::hash::{Hash, Hasher};
 use std::io::{Read, Seek, Write, SeekFrom};
 use std::os::raw::c_char;
 use std::fs::File;
+use crate::db1_string::Db1String;
 
 #[repr(C)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Document {
     id: u32,
-    name: String,
-    document: String,
+    name: Db1String,
+    document: Db1String,
 }
+
 
 impl Document {
     pub fn hash(&self) -> u64 {
@@ -54,6 +56,10 @@ impl SuitableDataType for Document {
     fn first(&self) -> u64 {
         todo!()
     }
+    fn resolve(&mut self, heap: &[u8]) {
+        self.name.resolve(heap);
+        self.document.resolve(heap);
+    }
 }
 
 impl BytesSerialize for Document {
@@ -68,8 +74,8 @@ impl FromReader for Document {
     fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
         let mut id: u32 = 0;
         r.read_exact(slice_from_type(&mut id)).unwrap();
-        let name = String::from_reader_and_heap(&mut r, heap);
-        let document = String::from_reader_and_heap(r, heap);
+        let name = Db1String::from_reader_and_heap(&mut r, heap);
+        let document = Db1String::from_reader_and_heap(r, heap);
         Self { id, name, document }
     }
 }
@@ -81,29 +87,45 @@ pub unsafe extern "C" fn db1_store(
     name: *const c_char,
     document: *const c_char,
 ) {
-    let name = CStr::from_ptr(name).to_owned().to_string_lossy().into_owned();
-    let document = CStr::from_ptr(document).to_owned().to_string_lossy().into_owned();
-    println!("Saving {}", name);
+    let name = CStr::from_ptr(name).to_owned().to_string_lossy().into_owned().into();
+    let document = CStr::from_ptr(document).to_owned().to_string_lossy().into_owned().into();
 
     (&mut *db).store(Document { id, name, document });
+}
+
+#[repr(C)]
+pub struct StrFatPtr {
+    ptr: *const c_char,
+    len: u64
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn db1_get(
     db: *mut TableManager<Document, File>,
     id: u32,
-    field: u8
-) -> *mut c_char {
+    field: u8,
+) -> StrFatPtr {
     let id = id as u64;
     let mut result = (&mut *db).get_in_all(id..=id);
 
-    let document = match field {
-        0 => std::mem::take(&mut result.first_mut().unwrap().name),
-        1 => std::mem::take(&mut result.first_mut().unwrap().document),
-        _ => panic!()
-    };
-    let document = CString::new(document).unwrap();
-    document.into_raw()
+    if let Some(result) = result.first_mut() {
+        let document = match field {
+            0 => std::mem::take(&mut result.name),
+            1 => std::mem::take(&mut result.document),
+            _ => panic!()
+        };
+        match document {
+            Db1String::Resolved(ptr, len) => StrFatPtr {ptr: ptr as *const c_char, len},
+            _ => panic!()
+        }
+    } else {
+        StrFatPtr {ptr: std::ptr::null(), len: 0}
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn free_char_p(f: *mut c_char) {
+    CString::from_raw(f);
 }
 
 #[no_mangle]
@@ -142,5 +164,8 @@ fn test_document() {
         dbg!(CString::from_raw(db1_get(dbm, 3, 0)));
         db1_persist(dbm);
 
+
+        let dbm = db1_new(CStr::from_bytes_with_nul(b"/tmp/test1\0").unwrap().as_ptr());
+        dbg!(db1_get(dbm, 3, 1));
     }
 }

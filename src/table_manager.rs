@@ -31,7 +31,13 @@ pub struct TableManager<T: SuitableDataType, Writer: Write + Seek + Read = Curso
 
 impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     // Maximum tuples we can hold in memory. After this amount, we empty to disk.
-    pub const FLUSH_CUTOFF: usize = 100;
+    #[cfg(test)]
+    pub const FLUSH_CUTOFF: usize = 10;
+
+    #[cfg(not(test))]
+    pub const FLUSH_CUTOFF: usize = 2500;
+}
+impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
 
     // Constructs a DbManager instance from a DbBase and an output writer (like a file)
     pub fn new(writer: Writer) -> Self {

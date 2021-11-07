@@ -1,14 +1,17 @@
 #![cfg(test)]
 
-use crate::suitable_data_type::DataType;
-use crate::table_base::TableBase;
-use crate::*;
-use rand::distributions::Alphanumeric;
-use rand::prelude::SliceRandom;
-use rand::{random, Rng};
 use std::fs::File;
 use std::io::{Cursor, Seek, SeekFrom, Write};
 use std::ops::Range as stdRange;
+
+use rand::{random, Rng};
+use rand::distributions::Alphanumeric;
+use rand::prelude::SliceRandom;
+
+use crate::*;
+use crate::db1_string::Db1String;
+use crate::suitable_data_type::DataType;
+use crate::table_base::TableBase;
 
 fn rand_string(len: usize) -> String {
     rand::thread_rng()
@@ -21,7 +24,7 @@ fn rand_string(len: usize) -> String {
 fn test_heap_struct() {
     #[derive(PartialEq, PartialOrd, Eq, Ord, Clone, Debug)]
     struct HeapTest {
-        a: String,
+        a: Db1String,
     }
     impl SuitableDataType for HeapTest {
         const REQUIRES_HEAP: bool = true;
@@ -38,7 +41,7 @@ fn test_heap_struct() {
     impl FromReader for HeapTest {
         fn from_reader_and_heap<R: Read>(r: R, heap: &[u8]) -> Self {
             Self {
-                a: String::from_reader_and_heap(r, heap),
+                a: Db1String::from_reader_and_heap(r, heap),
             }
         }
     }
@@ -46,9 +49,9 @@ fn test_heap_struct() {
     let mut db = TableBase::<HeapTest>::default();
 
     let mut s = Vec::new();
-    for _ in 0..100 {
+    for _ in 0..10 {
         let val = HeapTest {
-            a: rand_string(rand::thread_rng().gen_range(0..10000)),
+            a: rand_string(rand::thread_rng().gen_range(0..10)).into(),
         };
         db.store_and_replace(val.clone());
         if s.iter().find(|a| &&val == a) == None {
@@ -62,8 +65,14 @@ fn test_heap_struct() {
     assert_eq!(&result, s.as_slice());
 
     c.seek(SeekFrom::Start(0)).unwrap();
-    let d = TableBase::<HeapTest>::from_reader_and_heap(&mut c, &[]);
-    assert_eq!(&result, d.get_data());
+    let mut d = TableBase::<HeapTest>::from_reader_and_heap(&mut c, &[]);
+    let heap = d.heap.as_slice();
+    let mut d = d.get_data().clone();
+    for elem in &mut d {
+        elem.a.resolve(heap);
+    }
+
+    assert_eq!(&result, &d);
 }
 
 #[test]
@@ -97,7 +106,7 @@ fn test_crash_in_middle() {
     let flush_size = TableManager::<DataType>::FLUSH_CUTOFF;
 
     let mut last_lens: Vec<usize> = Vec::new();
-    for i in generate_int_range(0, 11 * flush_size) {
+    for i in generate_int_range(0, 5 * flush_size) {
         let i = i as u8;
         db.store_and_replace(DataType(i, i, i));
 
@@ -107,7 +116,7 @@ fn test_crash_in_middle() {
     }
     println!("Last lens {}", last_lens.len());
     assert!(
-        last_lens.len() >= 10,
+        last_lens.len() >= 4,
         "Number of different chunks must be larger than 10 for test to be effective"
     );
     std::mem::drop(db);

@@ -12,6 +12,7 @@ use crate::{
 impl<T: Ord + Clone> Default for TableBase<T> {
     fn default() -> Self {
         Self {
+            heap: Vec::new(),
             limits: Range::new(None),
             data: Vec::new(),
             is_sorted: true,
@@ -31,6 +32,7 @@ pub struct TableBase<T> {
     data: Vec<T>,
     limits: Range<T>,
     is_sorted: bool,
+    pub heap: Vec<u8>,
 }
 
 impl<T: SuitableDataType> Debug for TableBase<T> {
@@ -59,16 +61,17 @@ impl<T: SuitableDataType> FromReader for TableBase<T> {
 
         let mut buf = read_to_vec(&mut r, chunk_header.calculate_total_size());
         let (data, heap_unchecked) = buf.split_at_mut(chunk_header.calculate_heap_offset());
-        let heap = heap_writer::check(heap_unchecked);
+        let heap = heap_writer::check(heap_unchecked).to_vec();
         let mut data_cursor = Cursor::new(data);
 
         let mut db = Self {
             is_sorted: true,
+            heap,
             ..Default::default()
         };
 
         for _ in 0..chunk_header.length {
-            let val = T::from_reader_and_heap(&mut data_cursor, heap);
+            let val = T::from_reader_and_heap(&mut data_cursor, &db.heap);
             db.store(val);
         }
 
@@ -159,7 +162,7 @@ impl<T: SuitableDataType> TableBase<T> {
 impl<T: QueryableDataType> TableBase<T> {
     // Get slice corresponding to a primary key range
 
-    pub(crate) fn key_range<RB: RangeBounds<u64>>(&self, range: &RB) -> &[T] {
+    pub(crate) fn key_range<RB: RangeBounds<u64>>(&mut self, range: &RB) -> &[T] {
         use std::ops::Bound::*;
         if self.is_sorted {
             debug_assert!(self.data.is_sorted());
@@ -177,7 +180,14 @@ impl<T: QueryableDataType> TableBase<T> {
             Unbounded => true,
         });
         assert!(start_idx <= end_idx);
-        self.data.get(start_idx..end_idx).unwrap()
+
+        let mut slice = self.data.get_mut(start_idx..end_idx).unwrap();
+        if T::REQUIRES_HEAP {
+            for s in slice.iter_mut() {
+                s.resolve(&self.heap);
+            }
+        }
+        slice
     }
 }
 
