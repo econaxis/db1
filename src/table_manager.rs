@@ -37,8 +37,23 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     #[cfg(not(test))]
     pub const FLUSH_CUTOFF: usize = 2500;
 }
-impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
 
+fn bound_num<RB: RangeBounds<u64>>(bound: &RB) -> (u64, u64) {
+    use std::ops::Bound::*;
+    let first = match bound.start_bound() {
+        Included(x) => x,
+        Excluded(x) => x,
+        Unbounded => panic!()
+    };
+    let second = match bound.end_bound() {
+        Included(x) => x,
+        Excluded(x) => x,
+        Unbounded => panic!()
+    };
+    (*first, *second)
+}
+
+impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     // Constructs a DbManager instance from a DbBase and an output writer (like a file)
     pub fn new(writer: Writer) -> Self {
         Self {
@@ -75,24 +90,23 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
         where
             T: QueryableDataType,
     {
+        if self.db.len() != 0 {
+            self.force_flush();
+        }
         let ok_chunks = self.previous_headers.get_in_all(&range);
         let mut cln = BTreeSet::new();
         for pos in ok_chunks {
             let db = self.load_page(pos);
+            // Loading page has no effect on the db, so have to workaround the borrow checker
+            let db = unsafe { &mut *db };
             for j in db.key_range(&range) {
                 cln.replace(j.clone());
             }
         }
-        self.db.sort_self();
-
-        for j in self.db.key_range(&range) {
-            cln.replace(j.clone());
-        }
-
         cln.into_iter().collect()
     }
 
-    fn load_page(&mut self, page_loc: u64) -> &mut TableBase<T> {
+    fn load_page(&mut self, page_loc: u64) -> *mut TableBase<T> {
         let loader = || {
             self.output_stream.seek(SeekFrom::Start(page_loc)).unwrap();
             TableBase::<T>::from_reader_and_heap(&mut self.output_stream, &[])
@@ -125,12 +139,16 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
         self.db.get_data()
     }
 
-    pub fn force_flush(&mut self) -> (ChunkHeader<T>, Vec<T>) {
+    pub fn force_flush(&mut self) -> Option<(ChunkHeader<T>, Vec<T>)> {
+        if self.db.len() == 0 {
+            return None;
+        }
+
         let stream_pos = self.output_stream.stream_position().unwrap();
         let db = std::mem::take(&mut self.db);
         let (header, res) = db.force_flush(&mut self.output_stream);
         self.previous_headers.push(stream_pos, header.clone());
-        (header, res)
+        Some((header, res))
     }
 }
 

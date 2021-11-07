@@ -20,6 +20,7 @@ fn rand_string(len: usize) -> String {
         .map(char::from)
         .collect()
 }
+
 #[test]
 fn test_heap_struct() {
     #[derive(PartialEq, PartialOrd, Eq, Ord, Clone, Debug)]
@@ -182,8 +183,8 @@ fn test_db_manager_vecu8() {
 
 // Generate Vec of unique, random integers in range [min, max)
 fn generate_int_range<T>(min: T, max: T) -> Vec<T>
-where
-    stdRange<T>: Iterator<Item = T>,
+    where
+        stdRange<T>: Iterator<Item=T>,
 {
     let mut vec: Vec<_> = (min..max).collect();
     vec.shuffle(&mut rand::thread_rng());
@@ -207,6 +208,7 @@ fn run_test_with_db<T: Write + Read + Seek>(mut dbm: TableManager<DataType, T>) 
     let mut res = dbm.get_in_all(range);
     res.sort();
     expecting.sort();
+
     assert_eq!(res, expecting);
 }
 
@@ -316,8 +318,17 @@ fn test3() {
     dbg!(tbm);
 }
 
+use rand_chacha::ChaCha20Rng;
+use rand::SeedableRng;
+use std::cell::RefCell;
+thread_local! {
+    pub static RAND: RefCell<ChaCha20Rng> = RefCell::new(ChaCha20Rng::from_entropy());
+}
 fn rand_range(max: u8) -> u8 {
-    rand::random::<u8>() % max
+    RAND.with(|rand| {
+        let mut r = rand.borrow_mut();
+        r.gen::<u8>() % max
+    })
 }
 
 #[test]
@@ -338,12 +349,17 @@ fn test_edits_valid() {
 
     for (index, i) in possible_values.iter().enumerate() {
         let index = index as u64;
+
+
         let val = dbm.get_in_all(index..=index);
         match val.as_slice() {
             [a] => {
                 assert_eq!(a.1, *i)
             }
-            _ => panic!(),
+            _ => {
+                let val = dbm.get_in_all(index..=index);
+                panic!()
+            }
         }
     }
 }

@@ -9,6 +9,7 @@ use crate::suitable_data_type::{QueryableDataType, SuitableDataType};
 
 const CHECK_SEQUENCE: u16 = 22859;
 
+
 impl<T: SuitableDataType> BytesSerialize for Range<T> {
     fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut w: W, mut _heap: W1) {
         w.write_all(&CHECK_SEQUENCE.to_le_bytes()).unwrap();

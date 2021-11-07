@@ -4,6 +4,7 @@
 #![feature(write_all_vectored)]
 #![feature(is_sorted)]
 #![feature(with_options)]
+#![feature(iter_zip)]
 #![allow(clippy::manual_strip)]
 #![allow(clippy::assertions_on_constants)]
 

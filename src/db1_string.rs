@@ -3,12 +3,30 @@ use std::io::{Read, Seek, Write};
 use crate::{BytesSerialize, FromReader};
 use crate::chunk_header::slice_from_type;
 
-#[derive(Clone, PartialEq, PartialOrd, Ord, Eq, Debug)]
+#[derive(Clone, PartialOrd, Ord, Eq, Debug)]
 #[repr(C)]
 pub enum Db1String {
     Unresolved(u64, u64),
     Resolved(*const u8, u64),
-    Resolvedo(String)
+    Resolvedo(String),
+}
+
+impl PartialEq for Db1String {
+    fn eq(&self, other: &Self) -> bool {
+        let s = self.as_string();
+
+        let o = other.as_string();
+        if s.is_some() && o.is_some() {
+            s == o
+        } else {
+            match (self, other) {
+                (Self::Unresolved(a1, a2), Self::Unresolved(b1, b2)) => {
+                    a1 == b1 && a2 == b2
+                }
+                _ => false
+            }
+        }
+    }
 }
 
 impl Default for Db1String {
@@ -22,7 +40,7 @@ impl Db1String {
     const STRING_CHECK_SEQ: u16 = 0x72a0;
     pub fn resolve(&mut self, heap: &[u8]) {
         match &self {
-            Self::Resolved(_, _) | Self::Resolvedo(_) => {},
+            Self::Resolved(_, _) | Self::Resolvedo(_) => {}
             Self::Unresolved(loc, len) => {
                 let buffer_slice = &heap[*loc as usize..(loc + len) as usize];
                 let buffer_slice = buffer_slice.as_ptr();
@@ -33,9 +51,9 @@ impl Db1String {
     pub fn as_string(&self) -> Option<&str> {
         match self {
             Self::Resolved(s, len) => {
-                let slice = unsafe {std::slice::from_raw_parts(*s, *len as usize) };
+                let slice = unsafe { std::slice::from_raw_parts(*s, *len as usize) };
                 std::str::from_utf8(slice).ok()
-            },
+            }
             Self::Resolvedo(s) => Some(&s),
             _ => None
         }

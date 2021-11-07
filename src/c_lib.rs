@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 use crate::chunk_header::slice_from_type;
 use std::collections::hash_map::DefaultHasher;
 use std::ffi::{CStr, CString};
+use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Seek, Write, SeekFrom};
 use std::os::raw::c_char;
@@ -96,7 +97,22 @@ pub unsafe extern "C" fn db1_store(
 #[repr(C)]
 pub struct StrFatPtr {
     ptr: *const c_char,
-    len: u64
+    len: u64,
+}
+
+impl Debug for StrFatPtr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let str = unsafe { std::slice::from_raw_parts(self.ptr as *const u8, self.len as usize) };
+        let str = std::str::from_utf8(str).unwrap();
+        f.write_fmt(format_args!("{}", str))
+    }
+}
+
+impl StrFatPtr {
+    fn as_str(&self) -> &str {
+        let str = unsafe { std::slice::from_raw_parts(self.ptr as *const u8, self.len as usize) };
+        std::str::from_utf8(str).unwrap()
+    }
 }
 
 #[no_mangle]
@@ -110,16 +126,16 @@ pub unsafe extern "C" fn db1_get(
 
     if let Some(result) = result.first_mut() {
         let document = match field {
-            0 => std::mem::take(&mut result.name),
-            1 => std::mem::take(&mut result.document),
+            0 => &result.name,
+            1 => &result.document,
             _ => panic!()
         };
-        match document {
-            Db1String::Resolved(ptr, len) => StrFatPtr {ptr: ptr as *const c_char, len},
+        match document.as_string() {
+            Some(str) => StrFatPtr { ptr: str.as_ptr() as *const c_char, len: str.len() as u64},
             _ => panic!()
         }
     } else {
-        StrFatPtr {ptr: std::ptr::null(), len: 0}
+        StrFatPtr { ptr: std::ptr::null(), len: 0 }
     }
 }
 
@@ -158,14 +174,21 @@ fn test_document() {
         db1_store(dbm, 3, name.clone().into_raw(), document.clone().into_raw());
 
         let res = db1_get(dbm, 3, 1);
-        let str = CString::from_raw(res);
-        assert_eq!(str.as_bytes(), document.as_bytes());
+        assert_eq!(res.as_str().as_bytes(), document.as_bytes());
 
-        dbg!(CString::from_raw(db1_get(dbm, 3, 0)));
+        dbg!(db1_get(dbm, 3, 0));
         db1_persist(dbm);
 
 
         let dbm = db1_new(CStr::from_bytes_with_nul(b"/tmp/test1\0").unwrap().as_ptr());
         dbg!(db1_get(dbm, 3, 1));
+    }
+}
+
+#[test]
+fn test_debug() {
+    unsafe {
+        let dbm = db1_new(CStr::from_bytes_with_nul(b"/tmp/test.db\0").unwrap().as_ptr());
+        dbg!(db1_get(dbm, 3, 0));
     }
 }

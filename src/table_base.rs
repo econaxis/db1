@@ -104,6 +104,7 @@ impl<T: SuitableDataType> TableBase<T> {
 
     // Store tuple into self
     pub(crate) fn store(&mut self, t: T) {
+        let foud = self.data.iter().find(|x| x == &&t);
         debug_assert!(self.data.iter().find(|x| x == &&t).is_none());
         self.limits.add(&t);
         self.data.push(t);
@@ -137,7 +138,7 @@ impl<T: SuitableDataType> TableBase<T> {
 
     pub(crate) fn force_flush<W: Write>(mut self, mut w: W) -> (ChunkHeader<T>, Vec<T>) {
         self.sort_self();
-        assert!(!self.data.is_empty());
+        // assert!(!self.data.is_empty());
         debug_assert!(assert_no_dups(&self.data));
 
         let mut heap = heap_writer::default_heap_writer();
@@ -187,6 +188,7 @@ impl<T: QueryableDataType> TableBase<T> {
                 s.resolve(&self.heap);
             }
         }
+
         slice
     }
 }

@@ -8,6 +8,7 @@ edition = "2021"
 
 [dependencies]
 rand = "*"
+rand_chacha = "0.3.1"
 log = "*"
 env_logger = "*"
 cpython = {version = "*", optional = true}

@@ -54,6 +54,7 @@ dependencies = [
  "env_logger",
  "log",
  "rand",
+ "rand_chacha",
 ]
 
 [[package]]
