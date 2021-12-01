@@ -36,7 +36,7 @@ pub trait SuitableDataType: Ord + Clone + Debug + BytesSerialize + FromReader + 
     const REQUIRES_HEAP: bool = false;
     const TYPE_SIZE: u64 = std::mem::size_of::<Self>() as u64;
     // Get the primary key that will be used for comparisons, sorting, and duplicate checks.
-    fn first(&self) -> u64;
+    fn first(&self) -> u64 {todo!()}
     fn resolve(&mut self, heap: &[u8]) { todo!() }
 }
 

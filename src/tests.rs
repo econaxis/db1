@@ -30,9 +30,6 @@ fn test_heap_struct() {
     impl SuitableDataType for HeapTest {
         const REQUIRES_HEAP: bool = true;
         const TYPE_SIZE: u64 = 18;
-        fn first(&self) -> u64 {
-            todo!()
-        }
     }
     impl BytesSerialize for HeapTest {
         fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, data: W, heap: W1) {
@@ -239,7 +236,6 @@ fn test1() {
     let mut buffer: Vec<u8> = Vec::new();
     let (_, old_data) = db.force_flush(&mut buffer);
 
-    println!("Hex: {:?}", buffer);
 
     let reader = buffer.as_slice();
     let mut reader_cursor = Cursor::new(reader);

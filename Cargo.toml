@@ -11,15 +11,10 @@ rand = "*"
 rand_chacha = "0.3.1"
 log = "*"
 env_logger = "*"
-cpython = {version = "*", optional = true}
-
+zstd = "*"
 [lib]
-path="src/python-lib.rs"
+path="src/c_lib.rs"
 crate-type=["cdylib"]
-name="pythonlib"
-required-features=["cpython"]
-
-[features]
-default=["cpython"]
+name="clib"
 
 [workspace]

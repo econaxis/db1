@@ -8,6 +8,7 @@ use crate::table_manager::assert_no_dups;
 use crate::{
     BytesSerialize, ChunkHeader, DataType, FromReader, QueryableDataType, Range, SuitableDataType,
 };
+use crate::compressor;
 
 impl<T: Ord + Clone> Default for TableBase<T> {
     fn default() -> Self {
@@ -59,17 +60,24 @@ impl<T: SuitableDataType> FromReader for TableBase<T> {
         assert_eq!(_heap.len(), 0);
         let chunk_header = ChunkHeader::<T>::from_reader_and_heap(&mut r, _heap);
 
+
         let mut buf = read_to_vec(&mut r, chunk_header.calculate_total_size());
-        let (data, heap_unchecked) = buf.split_at_mut(chunk_header.calculate_heap_offset());
-        let heap = heap_writer::check(heap_unchecked).to_vec();
-        let mut data_cursor = Cursor::new(data);
+        let (real_data, real_heap) = {
+            let (data_unchecked, heap_unchecked) = buf.split_at_mut(chunk_header.calculate_heap_offset());
+            if chunk_header.compressed() {
+                (compressor::decompress::<T>(data_unchecked), compressor::decompress_heap(heap_unchecked))
+            } else {
+                (data_unchecked.to_vec(), heap_unchecked.to_vec())
+            }
+        };
+        let heap = heap_writer::check(&real_heap).to_vec();
+        let mut data_cursor = Cursor::new(real_data);
 
         let mut db = Self {
             is_sorted: true,
             heap,
             ..Default::default()
         };
-
         for _ in 0..chunk_header.length {
             let val = T::from_reader_and_heap(&mut data_cursor, &db.heap);
             db.store(val);
@@ -91,6 +99,8 @@ impl<T: SuitableDataType> TableBase<T> {
     }
 }
 
+const USE_COMPRESSION: bool = true;
+
 impl<T: SuitableDataType> TableBase<T> {
     pub(crate) fn len(&self) -> usize {
         self.data.len()
@@ -104,7 +114,6 @@ impl<T: SuitableDataType> TableBase<T> {
 
     // Store tuple into self
     pub(crate) fn store(&mut self, t: T) {
-        let foud = self.data.iter().find(|x| x == &&t);
         debug_assert!(self.data.iter().find(|x| x == &&t).is_none());
         self.limits.add(&t);
         self.data.push(t);
@@ -128,6 +137,7 @@ impl<T: SuitableDataType> TableBase<T> {
             length: self.data.len() as u32,
             heap_size: heap_size as u64,
             limits: self.limits.clone(),
+            compressed_size: 0,
         }
     }
 
@@ -138,7 +148,6 @@ impl<T: SuitableDataType> TableBase<T> {
 
     pub(crate) fn force_flush<W: Write>(mut self, mut w: W) -> (ChunkHeader<T>, Vec<T>) {
         self.sort_self();
-        // assert!(!self.data.is_empty());
         debug_assert!(assert_no_dups(&self.data));
 
         let mut heap = heap_writer::default_heap_writer();
@@ -146,13 +155,20 @@ impl<T: SuitableDataType> TableBase<T> {
         self.data
             .iter()
             .for_each(|a| a.serialize_with_heap(&mut data, &mut heap));
-
-        let header = self.get_chunk_header(heap.stream_position().unwrap());
-
-        header.serialize_with_heap(&mut w, default_mem_writer());
-
-        w.write_all(&data.into_inner()).unwrap();
-        w.write_all(&heap.into_inner()).unwrap();
+        let mut header = self.get_chunk_header(heap.stream_position().unwrap());
+        if USE_COMPRESSION {
+            let compressed_buf = compressor::compress::<T>(data.get_ref());
+            let compressed_heap = compressor::compress_heap(heap.get_ref());
+            header.heap_size = compressed_heap.len() as u64;
+            header.compressed_size = compressed_buf.len() as u64;
+            header.serialize_with_heap(&mut w, default_mem_writer());
+            w.write_all(&compressed_buf).unwrap();
+            w.write_all(&compressed_heap).unwrap();
+        } else {
+            header.serialize_with_heap(&mut w, default_mem_writer());
+            w.write_all(data.get_ref()).unwrap();
+            w.write_all(heap.get_ref()).unwrap();
+        }
         w.flush().unwrap();
         let vec = std::mem::take(&mut self.data);
 

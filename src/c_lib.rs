@@ -1,4 +1,15 @@
-use crate::{BytesSerialize, FromReader, QueryableDataType, SuitableDataType, TableManager};
+#![feature(cursor_remaining)]
+#![feature(write_all_vectored)]
+#![feature(is_sorted)]
+#![feature(with_options)]
+#![feature(iter_zip)]
+#![allow(clippy::manual_strip)]
+#![allow(clippy::assertions_on_constants)]
+
+pub use crate::{bytes_serializer::BytesSerialize, chunk_header::ChunkHeader,
+                chunk_header::ChunkHeaderIndex,
+                table_base::TableBase, bytes_serializer::FromReader, suitable_data_type::QueryableDataType,
+                suitable_data_type::SuitableDataType, table_manager::TableManager, suitable_data_type::DataType};
 use std::cmp::Ordering;
 use crate::chunk_header::slice_from_type;
 use std::collections::hash_map::DefaultHasher;
@@ -9,6 +20,23 @@ use std::io::{Read, Seek, Write, SeekFrom};
 use std::os::raw::c_char;
 use std::fs::File;
 use crate::db1_string::Db1String;
+use std::mem::MaybeUninit;
+use zstd::stream::raw::WriteBuf;
+pub use range::Range;
+
+
+mod buffer_pool;
+mod bytes_serializer;
+mod chunk_header;
+mod heap_writer;
+mod range;
+mod suitable_data_type;
+mod table_base;
+mod table_manager;
+mod tests;
+mod db1_string;
+mod compressor;
+
 
 #[repr(C)]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -131,7 +159,7 @@ pub unsafe extern "C" fn db1_get(
             _ => panic!()
         };
         match document.as_string() {
-            Some(str) => StrFatPtr { ptr: str.as_ptr() as *const c_char, len: str.len() as u64},
+            Some(str) => StrFatPtr { ptr: str.as_ptr() as *const c_char, len: str.len() as u64 },
             _ => panic!()
         }
     } else {
@@ -166,8 +194,10 @@ pub unsafe extern "C" fn db1_persist(db: *mut TableManager<Document, File>) {
 
 #[test]
 fn test_document() {
+    const PATH: &[u8] = b"/tmp/test1\0";
+    std::fs::remove_file("/tmp/test1").unwrap();
     unsafe {
-        let dbm = db1_new(CStr::from_bytes_with_nul(b"/tmp/test1\0").unwrap().as_ptr());
+        let dbm = db1_new(CStr::from_bytes_with_nul(PATH).unwrap().as_ptr());
         dbg!(&mut *dbm);
         let name = CString::new("fdsafsvcx").unwrap();
         let document = CString::new(" fdsafsaduf sa hdsapuofhs f").unwrap();
@@ -180,7 +210,7 @@ fn test_document() {
         db1_persist(dbm);
 
 
-        let dbm = db1_new(CStr::from_bytes_with_nul(b"/tmp/test1\0").unwrap().as_ptr());
+        let dbm = db1_new(CStr::from_bytes_with_nul(PATH).unwrap().as_ptr());
         dbg!(db1_get(dbm, 3, 1));
     }
 }
@@ -188,7 +218,7 @@ fn test_document() {
 #[test]
 fn test_debug() {
     unsafe {
-        let dbm = db1_new(CStr::from_bytes_with_nul(b"/tmp/test.db\0").unwrap().as_ptr());
+        let dbm = db1_new(CStr::from_bytes_with_nul(b"/tmp/test1\0").unwrap().as_ptr());
         dbg!(db1_get(dbm, 3, 0));
     }
 }

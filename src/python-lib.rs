@@ -34,6 +34,7 @@ mod table_manager;
 mod tests;
 mod db1_string;
 
+mod compressor;
 pub use chunk_header::{ChunkHeader, ChunkHeaderIndex};
 pub use suitable_data_type::DataType;
 pub use table_base::TableBase;

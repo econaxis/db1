@@ -1,6 +1,7 @@
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::ops::RangeBounds;
+use std::process::exit;
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
 use crate::range::Range;
@@ -9,14 +10,15 @@ use crate::{QueryableDataType, SuitableDataType};
 const CH_CHECK_SEQUENCE: u32 = 0x32aa8429;
 
 impl<T: SuitableDataType> BytesSerialize for ChunkHeader<T>
-where
-    T: BytesSerialize,
+    where
+        T: BytesSerialize,
 {
     fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut w: W, mut _heap: W1) {
         w.write_all(&CH_CHECK_SEQUENCE.to_le_bytes()).unwrap();
         w.write_all(&self.type_size.to_le_bytes()).unwrap();
         w.write_all(&self.length.to_le_bytes()).unwrap();
         w.write_all(&self.heap_size.to_le_bytes()).unwrap();
+        w.write_all(&self.compressed_size.to_le_bytes()).unwrap();
         self.limits.serialize_with_heap(w, _heap);
     }
 }
@@ -33,13 +35,13 @@ impl<T: SuitableDataType> FromReader for ChunkHeader<T> {
         let mut type_size: u32 = 0;
         let mut length: u32 = 0;
         let mut heap_size: u64 = 0;
+        let mut compressed_size: u64 = 0;
         r.read_exact(slice_from_type(&mut check_sequence)).unwrap();
         assert_eq!(check_sequence, CH_CHECK_SEQUENCE);
         r.read_exact(slice_from_type(&mut type_size)).unwrap();
         r.read_exact(slice_from_type(&mut length)).unwrap();
         r.read_exact(slice_from_type(&mut heap_size)).unwrap();
-
-
+        r.read_exact(slice_from_type(&mut compressed_size)).unwrap();
         let limits = Range::from_reader_and_heap(r, heap);
 
         Self {
@@ -47,6 +49,7 @@ impl<T: SuitableDataType> FromReader for ChunkHeader<T> {
             length,
             limits,
             heap_size,
+            compressed_size,
         }
     }
 }
@@ -60,14 +63,22 @@ pub struct ChunkHeader<T: SuitableDataType> {
     pub length: u32,
     pub heap_size: u64,
     pub limits: Range<T>,
+    pub compressed_size: u64,
 }
 
 impl<T: SuitableDataType> ChunkHeader<T> {
+    pub(crate) fn compressed(&self) -> bool {
+        self.compressed_size > 0
+    }
     pub fn calculate_total_size(&self) -> usize {
-        (self.type_size * self.length + self.heap_size as u32) as usize
+        if self.compressed() {
+            (self.compressed_size + self.heap_size) as usize
+        } else {
+            (self.type_size * self.length + self.heap_size as u32) as usize
+        }
     }
     pub fn calculate_heap_offset(&self) -> usize {
-        (self.type_size * self.length) as usize
+        (self.calculate_total_size() - self.heap_size as usize) as usize
     }
 }
 
@@ -88,8 +99,8 @@ impl<T: SuitableDataType> ChunkHeaderIndex<T> {
     }
     // Iterate all the previously flushed chunk headers and look for all tuples contained in range `RB`
     pub fn get_in_all<RB: RangeBounds<u64>>(&mut self, range: &RB) -> Vec<u64>
-    where
-        T: QueryableDataType,
+        where
+            T: QueryableDataType,
     {
         self.0
             .iter()
