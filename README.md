@@ -1,7 +1,7 @@
 # Simple Database
 
 This database was made exclusively for use
-by [my full-text search engine][https://github.com/econaxis/search#new-improved-storage-engine]. There are more details
+by [my full-text search engine](https://github.com/econaxis/search#new-improved-storage-engine). There are more details
 on this database at the link.
 
 This README only contains information on column-oriented data format and compression. Other information related to the
