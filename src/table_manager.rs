@@ -1,20 +1,18 @@
 // todo: compression, secondary indexes
 
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet};
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-
 use std::ops::RangeBounds;
 
+use crate::buffer_pool::BufferPool;
 use crate::bytes_serializer::FromReader;
 use crate::chunk_header::ChunkHeaderIndex;
-use crate::table_base::TableBase;
-
-use crate::buffer_pool::BufferPool;
+use crate::ChunkHeader;
 use crate::heap_writer::default_mem_writer;
 use crate::suitable_data_type::{QueryableDataType, SuitableDataType};
-use crate::ChunkHeader;
+use crate::table_base::TableBase;
 
 #[allow(unused)]
 fn setup_logging() {
@@ -29,29 +27,17 @@ pub struct TableManager<T: SuitableDataType, Writer: Write + Seek + Read = Curso
     output_stream: Writer,
 }
 
+
 impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     // Maximum tuples we can hold in memory. After this amount, we empty to disk.
     #[cfg(test)]
     pub const FLUSH_CUTOFF: usize = 10;
 
     #[cfg(not(test))]
-    pub const FLUSH_CUTOFF: usize = 2500;
+    pub const FLUSH_CUTOFF: usize = 250;
 }
 
-fn bound_num<RB: RangeBounds<u64>>(bound: &RB) -> (u64, u64) {
-    use std::ops::Bound::*;
-    let first = match bound.start_bound() {
-        Included(x) => x,
-        Excluded(x) => x,
-        Unbounded => panic!()
-    };
-    let second = match bound.end_bound() {
-        Included(x) => x,
-        Excluded(x) => x,
-        Unbounded => panic!()
-    };
-    (*first, *second)
-}
+
 
 impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     // Constructs a DbManager instance from a DbBase and an output writer (like a file)
@@ -86,22 +72,28 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
         self.check_should_flush();
         val
     }
-    pub fn get_in_all<RB: RangeBounds<u64>>(&mut self, range: RB) -> Vec<T>
+    pub fn get_in_all<RB: RangeBounds<u64>>(&mut self, range: RB) -> Vec<&T>
         where
             T: QueryableDataType,
     {
-        if self.db.len() != 0 {
-            self.force_flush();
-        }
         let ok_chunks = self.previous_headers.get_in_all(&range);
         let mut cln = BTreeSet::new();
+        self.buffer_pool.freeze();
         for pos in ok_chunks {
             let db = self.load_page(pos);
             // Loading page has no effect on the db, so have to workaround the borrow checker
             let db = unsafe { &mut *db };
             for j in db.key_range(&range) {
-                cln.replace(j.clone());
+                cln.replace(j);
             }
+        }
+        self.buffer_pool.unfreeze();
+
+
+        // Now search in the current portion
+        self.db.sort_self();
+        for j in self.db.key_range(&range) {
+            cln.replace(j);
         }
         cln.into_iter().collect()
     }
@@ -148,6 +140,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
         let db = std::mem::take(&mut self.db);
         let (header, res) = db.force_flush(&mut self.output_stream);
         self.previous_headers.push(stream_pos, header.clone());
+        println!("Flushed to {}", stream_pos);
         Some((header, res))
     }
 }

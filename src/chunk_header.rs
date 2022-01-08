@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::ops::RangeBounds;
-use std::process::exit;
+
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
 use crate::range::Range;
@@ -120,6 +120,8 @@ impl<T: SuitableDataType> FromReader for ChunkHeaderIndex<T> {
             r.read_to_end(&mut vec).unwrap();
             vec
         };
+
+        println!("File size: {}", vec.len());
 
         let mut vec_cursor = Cursor::new(vec);
         while !vec_cursor.is_empty() {

@@ -2,13 +2,11 @@ use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, Write};
 use std::ops::RangeBounds;
 
+use crate::{BytesSerialize, ChunkHeader, FromReader, QueryableDataType, Range, SuitableDataType};
+use crate::compressor;
 use crate::heap_writer;
 use crate::heap_writer::default_mem_writer;
 use crate::table_manager::assert_no_dups;
-use crate::{
-    BytesSerialize, ChunkHeader, DataType, FromReader, QueryableDataType, Range, SuitableDataType,
-};
-use crate::compressor;
 
 impl<T: Ord + Clone> Default for TableBase<T> {
     fn default() -> Self {
@@ -33,7 +31,7 @@ pub struct TableBase<T> {
     data: Vec<T>,
     limits: Range<T>,
     is_sorted: bool,
-    pub heap: Vec<u8>,
+    heap: Vec<u8>,
 }
 
 impl<T: SuitableDataType> Debug for TableBase<T> {
@@ -74,9 +72,10 @@ impl<T: SuitableDataType> FromReader for TableBase<T> {
         let mut data_cursor = Cursor::new(real_data);
 
         let mut db = Self {
+            data: vec![],
+            limits: Range::default(),
             is_sorted: true,
             heap,
-            ..Default::default()
         };
         for _ in 0..chunk_header.length {
             let val = T::from_reader_and_heap(&mut data_cursor, &db.heap);
@@ -97,7 +96,11 @@ impl<T: SuitableDataType> TableBase<T> {
             self.store(elem.clone());
         }
     }
+    pub fn heap(&self) -> &[u8] {
+        &self.heap
+    }
 }
+
 
 const USE_COMPRESSION: bool = true;
 
@@ -148,7 +151,7 @@ impl<T: SuitableDataType> TableBase<T> {
 
     pub(crate) fn force_flush<W: Write>(mut self, mut w: W) -> (ChunkHeader<T>, Vec<T>) {
         self.sort_self();
-        debug_assert!(assert_no_dups(&self.data));
+        println!("Limits {:?}", self.limits);
 
         let mut heap = heap_writer::default_heap_writer();
         let mut data = default_mem_writer();
@@ -198,7 +201,7 @@ impl<T: QueryableDataType> TableBase<T> {
         });
         assert!(start_idx <= end_idx);
 
-        let mut slice = self.data.get_mut(start_idx..end_idx).unwrap();
+        let slice = self.data.get_mut(start_idx..end_idx).unwrap();
         if T::REQUIRES_HEAP {
             for s in slice.iter_mut() {
                 s.resolve(&self.heap);
@@ -211,6 +214,7 @@ impl<T: QueryableDataType> TableBase<T> {
 
 #[test]
 fn key_range_test() {
+    use crate::DataType;
     let mut db = TableBase::<DataType>::default();
     let vec = vec![
         DataType(0, 0, 0),

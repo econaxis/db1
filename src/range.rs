@@ -29,7 +29,14 @@ pub struct Range<T> {
     pub(crate) min: Option<T>,
     pub(crate) max: Option<T>,
 }
-
+impl<T> Default for Range<T> {
+    fn default() -> Self {
+        Range::<T> {
+            min: None,
+            max: None
+        }
+    }
+}
 impl<T: Ord + Clone> Range<T> {
     pub fn new(init: Option<T>) -> Self {
         Self {

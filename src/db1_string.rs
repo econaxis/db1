@@ -1,21 +1,37 @@
+use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek, Write};
 
 use crate::{BytesSerialize, FromReader};
 use crate::chunk_header::slice_from_type;
 
-#[derive(Clone, PartialOrd, Ord, Eq, Debug)]
+#[derive(Clone, PartialOrd, Ord, Eq)]
 #[repr(C)]
 pub enum Db1String {
     Unresolved(u64, u64),
     Resolved(*const u8, u64),
-    Resolvedo(String),
+    Resolvedo(Vec<u8>),
+}
+
+impl Debug for Db1String {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Resolved(ptr, len) => {
+                if let Ok(s) = std::str::from_utf8(unsafe { std::slice::from_raw_parts(*ptr, *len as usize) }) {
+                    f.write_fmt(format_args!("Resolved ptr string {}", s))
+                } else {
+                    f.write_str("Resolved")
+                }
+            }
+            _ => f.write_str("Document")
+        }
+    }
 }
 
 impl PartialEq for Db1String {
     fn eq(&self, other: &Self) -> bool {
-        let s = self.as_string();
+        let s = self.as_buffer();
 
-        let o = other.as_string();
+        let o = other.as_buffer();
         if s.is_some() && o.is_some() {
             s == o
         } else {
@@ -48,13 +64,15 @@ impl Db1String {
             }
         }
     }
-    pub fn as_string(&self) -> Option<&str> {
+    pub fn as_buffer(&self) -> Option<&[u8]> {
         match self {
             Self::Resolved(s, len) => {
                 let slice = unsafe { std::slice::from_raw_parts(*s, *len as usize) };
-                std::str::from_utf8(slice).ok()
+                Some(slice)
             }
-            Self::Resolvedo(s) => Some(&s),
+            Self::Resolvedo(s) => {
+                Some(s)
+            }
             _ => None
         }
     }
@@ -62,15 +80,20 @@ impl Db1String {
 
 impl From<String> for Db1String {
     fn from(s: String) -> Self {
+        Self::Resolvedo(s.into_bytes())
+    }
+}
+
+impl From<Vec<u8>> for Db1String {
+    fn from(s: Vec<u8>) -> Self {
         Self::Resolvedo(s)
     }
 }
 
 impl BytesSerialize for Db1String {
     fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut data: W, mut heap: W1) {
-        match self.as_string() {
-            Some(s) => {
-                let slice = s.as_bytes();
+        match self.as_buffer() {
+            Some(slice) => {
                 let heap_position = heap.stream_position().unwrap();
                 data.write_all(&Self::STRING_CHECK_SEQ.to_le_bytes()).unwrap();
                 data.write_all(&heap_position.to_le_bytes()).unwrap();

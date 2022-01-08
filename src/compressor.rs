@@ -1,4 +1,4 @@
-use rand::Rng;
+
 use crate::SuitableDataType;
 
 fn shuffle_bytes(bytes: &[u8], type_len: usize) -> Vec<u8> {
@@ -28,14 +28,8 @@ fn reassemble_bytes(bytes: &[u8], type_len: usize) -> Vec<u8> {
     buffer
 }
 
-use std::mem::size_of;
 
-unsafe fn transmute_slice<Tfrom, Tto>(a: &[Tfrom]) -> &[Tto] {
-    assert_eq!((size_of::<Tfrom>() * a.len()) % size_of::<Tto>(), 0);
-    let aptr = a.as_ptr() as *const Tto;
-    let len = a.len() * size_of::<Tfrom>() / size_of::<Tto>();
-    unsafe { std::slice::from_raw_parts(aptr, len) }
-}
+
 
 fn shuffle_struct<T: SuitableDataType>(structs: &[u8]) -> Vec<u8> {
     let type_len = T::TYPE_SIZE as usize;
@@ -49,12 +43,11 @@ fn recover_structs<T: SuitableDataType>(bytes: &[u8]) -> Vec<u8> {
 
 pub fn compress<T: SuitableDataType>(structs: &[u8]) -> Vec<u8> {
     let shuffled = shuffle_struct::<T>(structs);
-    let result = zstd::stream::encode_all(&*shuffled, 8).unwrap();
-    println!("Compression ratio: {}", result.len() as f32 / shuffled.len() as f32);
-    result
+    
+    zstd::stream::encode_all(&*shuffled, 8).unwrap()
 }
 pub fn compress_heap(data: &[u8]) -> Vec<u8> {
-    zstd::stream::encode_all(data, 8).unwrap()
+    zstd::stream::encode_all(data, 0).unwrap()
 }
 
 pub fn decompress_heap(data: &[u8]) -> Vec<u8> {
@@ -62,13 +55,13 @@ pub fn decompress_heap(data: &[u8]) -> Vec<u8> {
 }
 pub fn decompress<T: SuitableDataType>(bytes: &[u8]) -> Vec<u8> {
     let decompressed = zstd::stream::decode_all(bytes).unwrap();
-    let reassembled = recover_structs::<T>(&decompressed);
-    reassembled
+    
+    recover_structs::<T>(&decompressed)
 }
 
 #[test]
 fn test_reassembly_works() {
-    use rand::thread_rng;
+    
     let rand_str: String = " fdsafd;salkf dsa08hf d [sahdsa;ofjs afdhsa [ufdsafd;sa fkdsa ;flsaj ;dlka jfdsa".to_string();
 
     let shuffled = shuffle_bytes(rand_str.as_bytes(), 8);

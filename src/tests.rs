@@ -1,5 +1,6 @@
 #![cfg(test)]
 
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::{Cursor, Seek, SeekFrom, Write};
 use std::ops::Range as stdRange;
@@ -7,6 +8,8 @@ use std::ops::Range as stdRange;
 use rand::{random, Rng};
 use rand::distributions::Alphanumeric;
 use rand::prelude::SliceRandom;
+use rand::SeedableRng;
+use rand_chacha::ChaCha20Rng;
 
 use crate::*;
 use crate::db1_string::Db1String;
@@ -19,6 +22,16 @@ fn rand_string(len: usize) -> String {
         .take(len)
         .map(char::from)
         .collect()
+}
+
+fn vec_equals<T: PartialEq>(a: &Vec<T>, b: &Vec<&T>) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    for i in 0..a.len() {
+        if &a[i] != b[i] { return false; }
+    }
+    true
 }
 
 #[test]
@@ -63,13 +76,12 @@ fn test_heap_struct() {
     assert_eq!(&result, s.as_slice());
 
     c.seek(SeekFrom::Start(0)).unwrap();
-    let mut d = TableBase::<HeapTest>::from_reader_and_heap(&mut c, &[]);
-    let heap = d.heap.as_slice();
+    let d = TableBase::<HeapTest>::from_reader_and_heap(&mut c, &[]);
+    let heap = d.heap();
     let mut d = d.get_data().clone();
     for elem in &mut d {
         elem.a.resolve(heap);
     }
-
     assert_eq!(&result, &d);
 }
 
@@ -81,12 +93,12 @@ fn test_editable() {
     db.store_and_replace(DataType(1, 2, 2));
     db.store_and_replace(DataType(0, 1, 1));
     db.force_flush();
-    assert_eq!(db.get_in_all(0..=1), [DataType(0, 1, 1), DataType(1, 2, 2)]);
+    assert!(vec_equals(&vec![DataType(0, 1, 1), DataType(1, 2, 2)], &db.get_in_all(0..=1)));
 }
 
 #[test]
 fn test_works_with_std_file() {
-    let file = File::with_options()
+    let file = std::fs::OpenOptions::new()
         .create(true)
         .read(true)
         .write(true)
@@ -161,13 +173,13 @@ fn test_all_findable() {
             let range = j.first()..=j1.first();
             let mut res = dbm.get_in_all(j.first()..=j1.first());
             res.sort();
-            assert_eq!(
-                res,
-                solutions
+            assert!(vec_equals(
+                &solutions
                     .iter()
                     .filter_map(|a| range.contains(&a.first()).then(|| a.clone()))
-                    .collect::<Vec<_>>()
-            );
+                    .collect::<Vec<_>>(),
+                &res
+            ));
         }
     }
 }
@@ -206,7 +218,7 @@ fn run_test_with_db<T: Write + Read + Seek>(mut dbm: TableManager<DataType, T>) 
     res.sort();
     expecting.sort();
 
-    assert_eq!(res, expecting);
+    assert!(vec_equals(&expecting, &res));
 }
 
 #[test]
@@ -314,11 +326,9 @@ fn test3() {
     dbg!(tbm);
 }
 
-use rand_chacha::ChaCha20Rng;
-use rand::SeedableRng;
-use std::cell::RefCell;
 thread_local! {
-    pub static RAND: RefCell<ChaCha20Rng> = RefCell::new(ChaCha20Rng::from_entropy());
+    // pub static RAND: RefCell<ChaCha20Rng> = RefCell::new(ChaCha20Rng::from_entropy());
+    pub static RAND: RefCell<ChaCha20Rng> = RefCell::new(ChaCha20Rng::seed_from_u64(1));
 }
 fn rand_range(max: u8) -> u8 {
     RAND.with(|rand| {
@@ -353,9 +363,17 @@ fn test_edits_valid() {
                 assert_eq!(a.1, *i)
             }
             _ => {
-                let val = dbm.get_in_all(index..=index);
+                dbg!("{:?}", val);
                 panic!()
             }
         }
     }
+}
+
+
+#[test]
+fn testtmp() {
+    let file = File::open("/home/henry/imgrepo/testfile/test-imgrepo.db").unwrap();
+    let _file1 = file.try_clone().unwrap();
+    let _dbm = TableManager::<Document>::read_from_file(file, Cursor::default());
 }

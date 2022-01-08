@@ -1,29 +1,30 @@
 #![feature(cursor_remaining)]
 #![feature(write_all_vectored)]
 #![feature(is_sorted)]
-#![feature(with_options)]
-#![feature(iter_zip)]
+#![feature(map_first_last)]
 #![allow(clippy::manual_strip)]
 #![allow(clippy::assertions_on_constants)]
+#![allow(unused_unsafe)]
 
-pub use crate::{bytes_serializer::BytesSerialize, chunk_header::ChunkHeader,
-                chunk_header::ChunkHeaderIndex,
-                table_base::TableBase, bytes_serializer::FromReader, suitable_data_type::QueryableDataType,
-                suitable_data_type::SuitableDataType, table_manager::TableManager, suitable_data_type::DataType};
 use std::cmp::Ordering;
-use crate::chunk_header::slice_from_type;
-use std::collections::hash_map::DefaultHasher;
+
 use std::ffi::{CStr, CString};
 use std::fmt::{Debug, Formatter};
-use std::hash::{Hash, Hasher};
-use std::io::{Read, Seek, Write, SeekFrom};
-use std::os::raw::c_char;
 use std::fs::File;
-use crate::db1_string::Db1String;
-use std::mem::MaybeUninit;
-use zstd::stream::raw::WriteBuf;
+use std::io::{Read, Seek, SeekFrom, Write};
+
+use std::os::raw::c_char;
+
+
+
 pub use range::Range;
 
+pub use crate::{bytes_serializer::BytesSerialize, bytes_serializer::FromReader,
+                chunk_header::ChunkHeader,
+                chunk_header::ChunkHeaderIndex, suitable_data_type::DataType, suitable_data_type::QueryableDataType,
+                suitable_data_type::SuitableDataType, table_base::TableBase, table_manager::TableManager};
+use crate::chunk_header::slice_from_type;
+use crate::db1_string::Db1String;
 
 mod buffer_pool;
 mod bytes_serializer;
@@ -114,12 +115,14 @@ pub unsafe extern "C" fn db1_store(
     db: *mut TableManager<Document, File>,
     id: u32,
     name: *const c_char,
+    name_len: u32,
     document: *const c_char,
+    document_len: u32,
 ) {
-    let name = CStr::from_ptr(name).to_owned().to_string_lossy().into_owned().into();
-    let document = CStr::from_ptr(document).to_owned().to_string_lossy().into_owned().into();
+    let name: Db1String = unsafe { std::slice::from_raw_parts(name as *const u8, name_len as usize) }.to_vec().into();
+    let document: Db1String = unsafe { std::slice::from_raw_parts(document as *const u8, document_len as usize) }.to_vec().into();
 
-    (&mut *db).store(Document { id, name, document });
+    (&mut *db).store_and_replace(Document { id, name, document });
 }
 
 #[repr(C)]
@@ -139,7 +142,11 @@ impl Debug for StrFatPtr {
 impl StrFatPtr {
     fn as_str(&self) -> &str {
         let str = unsafe { std::slice::from_raw_parts(self.ptr as *const u8, self.len as usize) };
-        std::str::from_utf8(str).unwrap()
+        if let Ok(s) = std::str::from_utf8(str) {
+            s
+        } else {
+            panic!("String error! {:?}", str);
+        }
     }
 }
 
@@ -158,8 +165,10 @@ pub unsafe extern "C" fn db1_get(
             1 => &result.document,
             _ => panic!()
         };
-        match document.as_string() {
-            Some(str) => StrFatPtr { ptr: str.as_ptr() as *const c_char, len: str.len() as u64 },
+        match document.as_buffer() {
+            Some(str) => {
+                StrFatPtr { ptr: str.as_ptr() as *const c_char, len: str.len() as u64 }
+            }
             _ => panic!()
         }
     } else {
@@ -169,20 +178,20 @@ pub unsafe extern "C" fn db1_get(
 
 #[no_mangle]
 pub unsafe extern "C" fn free_char_p(f: *mut c_char) {
-    CString::from_raw(f);
+    let _todrop = CString::from_raw(f);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn db1_new(filename: *const c_char) -> *mut TableManager<Document, File> {
-    let file = File::with_options()
+    let mut file = std::fs::OpenOptions::new()
         .create(true)
         .read(true)
+        .append(true)
         .write(true)
         .open(CStr::from_ptr(filename).to_str().unwrap())
         .unwrap();
-
-    let mut file1 = file.try_clone().unwrap();
-    file1.seek(SeekFrom::Start(0)).unwrap();
+    let file1 = File::open(CStr::from_ptr(filename).to_str().unwrap()).unwrap();
+    file.seek(SeekFrom::End(0)).unwrap();
     let db = TableManager::<Document, File>::read_from_file(file1, file);
     Box::leak(Box::new(db))
 }
@@ -191,6 +200,7 @@ pub unsafe extern "C" fn db1_new(filename: *const c_char) -> *mut TableManager<D
 pub unsafe extern "C" fn db1_persist(db: *mut TableManager<Document, File>) {
     (&mut *db).force_flush();
 }
+
 
 #[test]
 fn test_document() {
@@ -201,9 +211,10 @@ fn test_document() {
         dbg!(&mut *dbm);
         let name = CString::new("fdsafsvcx").unwrap();
         let document = CString::new(" fdsafsaduf sa hdsapuofhs f").unwrap();
-        db1_store(dbm, 3, name.clone().into_raw(), document.clone().into_raw());
+        db1_store(dbm, 3, name.clone().into_raw(), name.as_bytes().len() as u32, document.clone().into_raw(), document.as_bytes().len() as u32);
 
         let res = db1_get(dbm, 3, 1);
+        println!("{:?}", res.ptr);
         assert_eq!(res.as_str().as_bytes(), document.as_bytes());
 
         dbg!(db1_get(dbm, 3, 0));

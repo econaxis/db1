@@ -188,7 +188,7 @@ fn debug_dump(_p: Python) -> PyResult<cpython::NoArgs> {
     println!("{:?}", db);
     Ok(cpython::NoArgs)
 }
-py_module_initializer!(libpythonlib, |py, m| {
+py_module_initializer!(python_interface, |py, m| {
     m.add(
         py,
         "store",

@@ -8,8 +8,8 @@ pub fn default_heap_writer() -> Cursor<Vec<u8>> {
     s
 }
 pub fn default_mem_writer() -> Cursor<Vec<u8>> {
-    let mut s = Cursor::new(Vec::new());
-    s
+    
+    Cursor::new(Vec::new())
 }
 
 pub fn check(unchecked: &[u8]) -> &[u8] {

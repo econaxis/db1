@@ -1,10 +1,10 @@
 use std::cmp::{Ord, Ordering};
 use std::fmt::{Debug, Formatter};
-use std::io::{Read, Seek, Write};
+use std::io::{Read};
 
 use crate::{bytes_serializer, from_reader};
 use crate::bytes_serializer::{BytesSerialize, FromReader};
-use crate::chunk_header::slice_from_type;
+
 
 #[derive(Clone)]
 #[repr(C)]
@@ -37,7 +37,7 @@ pub trait SuitableDataType: Ord + Clone + Debug + BytesSerialize + FromReader + 
     const TYPE_SIZE: u64 = std::mem::size_of::<Self>() as u64;
     // Get the primary key that will be used for comparisons, sorting, and duplicate checks.
     fn first(&self) -> u64 {todo!()}
-    fn resolve(&mut self, heap: &[u8]) { todo!() }
+    fn resolve(&mut self, _heap: &[u8]) { todo!() }
 }
 
 impl SuitableDataType for DataType {

@@ -12,9 +12,12 @@ rand_chacha = "0.3.1"
 log = "*"
 env_logger = "*"
 zstd = "*"
+cpython = "*"
+
+
 [lib]
 path="src/c_lib.rs"
-crate-type=["cdylib"]
-name="clib"
+name = "db1"
+crate-type = ["cdylib"]
 
 [workspace]
