@@ -76,6 +76,15 @@ impl Db1String {
             _ => None
         }
     }
+    pub fn clone1(&self, heap: &[u8]) -> Self {
+        match self {
+            Self::Resolved(..) => panic!(),
+            Self::Resolvedo(v) => Self::Resolvedo(v.clone()),
+            Self::Unresolved(ind, len) => {
+                Self::Resolvedo(heap[*ind as usize..(ind + len) as usize].to_vec())
+            }
+        }
+    }
 }
 
 impl From<String> for Db1String {

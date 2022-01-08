@@ -34,6 +34,7 @@ pub struct TableBase<T> {
     heap: Vec<u8>,
 }
 
+
 impl<T: SuitableDataType> Debug for TableBase<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DbBase")
@@ -133,7 +134,6 @@ impl<T: SuitableDataType> TableBase<T> {
     }
 
     // Get the chunk header of current in-memory data
-
     pub(crate) fn get_chunk_header(&self, heap_size: u64) -> ChunkHeader<T> {
         ChunkHeader::<T> {
             type_size: T::TYPE_SIZE as u32,
@@ -181,6 +181,38 @@ impl<T: SuitableDataType> TableBase<T> {
 
 impl<T: QueryableDataType> TableBase<T> {
     // Get slice corresponding to a primary key range
+
+    pub fn prepare_key_range<RB: RangeBounds<u64>>(&mut self, range: &RB) -> std::ops::Range<usize> {
+        use std::ops::Bound::*;
+        if self.is_sorted {
+            debug_assert!(self.data.is_sorted());
+        } else {
+            assert!(self.data.is_sorted());
+        }
+        let start_idx = self.data.partition_point(|a| match range.start_bound() {
+            Included(x) => a < x,
+            Excluded(x) => a <= x,
+            Unbounded => false,
+        });
+        let end_idx = self.data.partition_point(|a| match range.end_bound() {
+            Included(x) => a <= x,
+            Excluded(x) => a < x,
+            Unbounded => true,
+        });
+        assert!(start_idx <= end_idx);
+
+        let slice = self.data.get_mut(start_idx..end_idx).unwrap();
+        if T::REQUIRES_HEAP {
+            // for s in slice.iter_mut() {
+            //     s.resolve(&self.heap);
+            // }
+        }
+        (start_idx..end_idx)
+    }
+    pub fn resolve_key_range(&self, range: std::ops::Range<usize>) -> &[T] {
+        self.data.get(range).unwrap()
+    }
+
 
     pub(crate) fn key_range<RB: RangeBounds<u64>>(&mut self, range: &RB) -> &[T] {
         use std::ops::Bound::*;

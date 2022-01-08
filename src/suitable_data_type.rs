@@ -30,7 +30,11 @@ from_reader!(DataType);
 
 
 
-pub trait QueryableDataType: SuitableDataType + PartialOrd<u64> + PartialEq<u64> {}
+pub trait QueryableDataType: SuitableDataType + PartialOrd<u64> + PartialEq<u64> {
+    fn clone1(&self, heap: &[u8]) -> Self {
+        self.clone()
+    }
+}
 
 pub trait SuitableDataType: Ord + Clone + Debug + BytesSerialize + FromReader + 'static {
     const REQUIRES_HEAP: bool = false;

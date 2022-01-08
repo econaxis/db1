@@ -44,7 +44,7 @@ fn recover_structs<T: SuitableDataType>(bytes: &[u8]) -> Vec<u8> {
 pub fn compress<T: SuitableDataType>(structs: &[u8]) -> Vec<u8> {
     let shuffled = shuffle_struct::<T>(structs);
     
-    zstd::stream::encode_all(&*shuffled, 8).unwrap()
+    zstd::stream::encode_all(&*shuffled, 0).unwrap()
 }
 pub fn compress_heap(data: &[u8]) -> Vec<u8> {
     zstd::stream::encode_all(data, 0).unwrap()

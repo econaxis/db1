@@ -1,7 +1,7 @@
 // todo: compression, secondary indexes
 
 use std::cmp::Ordering;
-use std::collections::{BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::ops::RangeBounds;
@@ -25,6 +25,7 @@ pub struct TableManager<T: SuitableDataType, Writer: Write + Seek + Read = Curso
     previous_headers: ChunkHeaderIndex<T>,
     buffer_pool: BufferPool<T>,
     output_stream: Writer,
+    result_buffer: Vec<T>,
 }
 
 
@@ -38,7 +39,6 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
 }
 
 
-
 impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     // Constructs a DbManager instance from a DbBase and an output writer (like a file)
     pub fn new(writer: Writer) -> Self {
@@ -47,6 +47,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
             previous_headers: Default::default(),
             db: Default::default(),
             buffer_pool: Default::default(),
+            result_buffer: Default::default(),
         }
     }
 
@@ -72,30 +73,31 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
         self.check_should_flush();
         val
     }
-    pub fn get_in_all<RB: RangeBounds<u64>>(&mut self, range: RB) -> Vec<&T>
+    pub fn get_in_all<RB: RangeBounds<u64>>(&mut self, range: RB) -> &Vec<T>
         where
             T: QueryableDataType,
     {
         let ok_chunks = self.previous_headers.get_in_all(&range);
         let mut cln = BTreeSet::new();
-        self.buffer_pool.freeze();
         for pos in ok_chunks {
             let db = self.load_page(pos);
             // Loading page has no effect on the db, so have to workaround the borrow checker
             let db = unsafe { &mut *db };
-            for j in db.key_range(&range) {
-                cln.replace(j);
+            let slice = db.prepare_key_range(&range);
+            for j in db.resolve_key_range(slice) {
+                cln.replace(j.clone1(db.heap()));
             }
         }
-        self.buffer_pool.unfreeze();
 
 
         // Now search in the current portion
         self.db.sort_self();
-        for j in self.db.key_range(&range) {
-            cln.replace(j);
+        let slice = self.db.prepare_key_range(&range);
+        for j in self.db.resolve_key_range(slice) {
+            cln.replace(j.clone1(self.db.heap()));
         }
-        cln.into_iter().collect()
+        self.result_buffer = cln.into_iter().collect();
+        &self.result_buffer
     }
 
     fn load_page(&mut self, page_loc: u64) -> *mut TableBase<T> {
@@ -114,6 +116,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
             previous_headers: ChunkHeaderIndex::from_reader_and_heap(r, &[]),
             db: TableBase::default(),
             buffer_pool: BufferPool::default(),
+            result_buffer: Default::default(),
             output_stream,
         }
     }
@@ -162,6 +165,7 @@ impl<T: SuitableDataType> Default for TableManager<T> {
             output_stream: default_mem_writer(),
             buffer_pool: Default::default(),
             previous_headers: Default::default(),
+            result_buffer: Default::default()
         }
     }
 }

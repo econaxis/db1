@@ -10,7 +10,6 @@ pub struct BufferPool<T: SuitableDataType> {
     time: u64,
     // Maps from location -> actual in-memory database
     buffer_pool: HashMap<u64, TableBase<T>>,
-    frozen: bool,
 }
 
 impl<T: SuitableDataType> Default for BufferPool<T> {
@@ -18,21 +17,20 @@ impl<T: SuitableDataType> Default for BufferPool<T> {
         Self {
             last_use: Default::default(),
             buffer_pool: Default::default(),
-            frozen: false,
             time: 0,
         }
     }
 }
 
 impl<T: SuitableDataType> BufferPool<T> {
-    const MAX_BUFFERPOOL_SIZE: usize = 20;
+    const MAX_BUFFERPOOL_SIZE: usize = 200;
 
-    pub fn freeze(&mut self) {
-        self.frozen = true;
+    #[cfg(test)]
+    pub fn unload_all(&mut self) {
+        self.last_use.clear();
+        self.buffer_pool.clear();
     }
-    pub fn unfreeze(&mut self) {
-        self.frozen = false;
-    }
+
     pub fn load_page<Loader: FnOnce() -> TableBase<T>>(
         &mut self,
         location: u64,
@@ -49,9 +47,8 @@ impl<T: SuitableDataType> BufferPool<T> {
     }
 
     pub fn evict_if_necessary(&mut self) {
-        if self.frozen { return; }
         if self.buffer_pool.len() > Self::MAX_BUFFERPOOL_SIZE {
-            // Find least recently used itemstable_ma
+            // Find least recently used items
             let mut lru = Vec::from_iter(self.last_use.iter().map(|(a, b)| (*a, *b)));
             lru.sort_by_key(|(_loc, uses)| *uses);
             for (loc_to_remove, _) in lru {

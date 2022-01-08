@@ -93,7 +93,7 @@ fn test_editable() {
     db.store_and_replace(DataType(1, 2, 2));
     db.store_and_replace(DataType(0, 1, 1));
     db.force_flush();
-    assert!(vec_equals(&vec![DataType(0, 1, 1), DataType(1, 2, 2)], &db.get_in_all(0..=1)));
+    assert_eq!(&vec![DataType(0, 1, 1), DataType(1, 2, 2)], db.get_in_all(0..=1));
 }
 
 #[test]
@@ -171,15 +171,15 @@ fn test_all_findable() {
     for (iter, j) in solutions.iter().enumerate() {
         for (_iter1, j1) in solutions[iter..].iter().enumerate() {
             let range = j.first()..=j1.first();
-            let mut res = dbm.get_in_all(j.first()..=j1.first());
+            let mut res = dbm.get_in_all(j.first()..=j1.first()).clone();
             res.sort();
-            assert!(vec_equals(
-                &solutions
+            assert_eq!(
+                solutions
                     .iter()
                     .filter_map(|a| range.contains(&a.first()).then(|| a.clone()))
                     .collect::<Vec<_>>(),
-                &res
-            ));
+                res
+            );
         }
     }
 }
@@ -214,11 +214,11 @@ fn run_test_with_db<T: Write + Read + Seek>(mut dbm: TableManager<DataType, T>) 
         }
     }
 
-    let mut res = dbm.get_in_all(range);
+    let mut res = dbm.get_in_all(range).clone();
     res.sort();
     expecting.sort();
 
-    assert!(vec_equals(&expecting, &res));
+    assert_eq!(expecting, res);
 }
 
 #[test]
@@ -347,12 +347,12 @@ fn test_edits_valid() {
         let i = i as u8;
         dbm.store(DataType(i, 0, 0));
     }
-    for _ in 0..10000 {
+    for _ in 0..1000 {
         let new_value = DataType(rand_range(LENGTH), rand_range(LENGTH), 0);
         possible_values[new_value.0 as usize] = new_value.1;
         dbm.store_and_replace(new_value);
     }
-
+    println!("Checking");
     for (index, i) in possible_values.iter().enumerate() {
         let index = index as u64;
 

@@ -54,7 +54,15 @@ impl Document {
     }
 }
 
-impl QueryableDataType for Document {}
+impl QueryableDataType for Document {
+    fn clone1(&self, heap: &[u8]) -> Self {
+        Self {
+            id: self.id,
+            name: self.name.clone1(heap),
+            document: self.document.clone1(heap)
+        }
+    }
+}
 
 impl PartialEq<u64> for Document {
     fn eq(&self, other: &u64) -> bool {
@@ -159,7 +167,7 @@ pub unsafe extern "C" fn db1_get(
     let id = id as u64;
     let mut result = (&mut *db).get_in_all(id..=id);
 
-    if let Some(result) = result.first_mut() {
+    if let Some(result) = result.first() {
         let document = match field {
             0 => &result.name,
             1 => &result.document,
