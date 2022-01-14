@@ -1,18 +1,21 @@
 // todo: compression, secondary indexes
 
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::ops::RangeBounds;
+use std::ops::{RangeBounds, RangeFull};
+
+use serializer::{DbPageManager, PageSerializer};
 
 use crate::buffer_pool::BufferPool;
 use crate::bytes_serializer::FromReader;
 use crate::chunk_header::ChunkHeaderIndex;
 use crate::ChunkHeader;
 use crate::heap_writer::default_mem_writer;
-use crate::suitable_data_type::{QueryableDataType, SuitableDataType};
+use crate::suitable_data_type::SuitableDataType;
 use crate::table_base::TableBase;
+use crate::table_traits::BasicTable;
 
 #[allow(unused)]
 fn setup_logging() {
@@ -20,45 +23,39 @@ fn setup_logging() {
 }
 
 // Provides higher level database API's -- automated flushing to disk, query functions for previously flushed chunks
-pub struct TableManager<T: SuitableDataType, Writer: Write + Seek + Read = Cursor<Vec<u8>>> {
-    db: TableBase<T>,
-    previous_headers: ChunkHeaderIndex<T>,
-    buffer_pool: BufferPool<T>,
-    output_stream: Writer,
+pub struct TableManager<T, TableT = TableBase<T>, Writer = Cursor<Vec<u8>>> {
+    db: TableT,
+    buffer_pool: BufferPool<TableT>,
+    pub output_stream: PageSerializer<Writer>,
     result_buffer: Vec<T>,
 }
 
 
-impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
+impl<T: SuitableDataType, TableT: BasicTable<T>, Writer: Write + Seek + Read> TableManager<T, TableT, Writer> {
     // Maximum tuples we can hold in memory. After this amount, we empty to disk.
     #[cfg(test)]
     pub const FLUSH_CUTOFF: usize = 10;
 
     #[cfg(not(test))]
-    pub const FLUSH_CUTOFF: usize = 250;
-}
-
-
-impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
+    pub const FLUSH_CUTOFF: usize = 2500;
     // Constructs a DbManager instance from a DbBase and an output writer (like a file)
     pub fn new(writer: Writer) -> Self {
         Self {
-            output_stream: writer,
-            previous_headers: Default::default(),
+            output_stream: PageSerializer::create(writer),
             db: Default::default(),
             buffer_pool: Default::default(),
             result_buffer: Default::default(),
         }
     }
 
+    pub fn inner_stream(self) -> Writer {
+        self.output_stream.file
+    }
+
     // Check if exceeded in memory capacity and write to disk
     fn check_should_flush(&mut self) {
         if self.db.len() >= Self::FLUSH_CUTOFF {
-            println!("Flushing {} tuples", self.db.len());
-            let stream_pos = self.output_stream.stream_position().unwrap();
-            let db = std::mem::take(&mut self.db);
-            let (header, _) = db.force_flush(&mut self.output_stream);
-            self.previous_headers.push(stream_pos, header);
+            self.force_flush();
         }
     }
 
@@ -73,37 +70,72 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
         self.check_should_flush();
         val
     }
-    pub fn get_in_all<RB: RangeBounds<u64>>(&mut self, range: RB) -> &Vec<T>
-        where
-            T: QueryableDataType,
+    pub fn get_output_buffer_first(&mut self) -> T {
+        self.result_buffer.remove(0)
+    }
+
+
+    fn process_items(db: &TableT, item: &T, mask: u8) -> T {
+        let mut cloned = item.clone();
+        for i in 0..7 {
+            if (mask & (1 << i)) != 0 {
+                cloned.resolve_item(db.heap(), i);
+            }
+        }
+        cloned
+    }
+
+    pub fn get_one(&mut self, id: u64, load_mask: u8) -> Option<T> {
+        self.db.sort_self();
+        if let Some(j) = self.db.key_range(id..=id).first() {
+            let cloned = Self::process_items(&self.db, *j, load_mask);
+            return Some(cloned);
+        }
+
+        let mut loads = 0;
+        let mut ok_chunks = self.output_stream.previous_headers.get_in_all(1, &(id..=id));
+        ok_chunks.reverse();
+        for pos in ok_chunks {
+            let db = self.load_page(pos);
+            loads += 1;
+            // Loading page has no effect on the db, so have to workaround the borrow checker
+            if let Some(j) = db.key_range(id..=id).first() {
+                let cloned = Self::process_items(db, j, load_mask);
+                println!("Found item in {}", loads);
+                return Some(cloned);
+            }
+        }
+        None
+    }
+    pub fn get_in_all<RB: RangeBounds<u64> + Clone>(&mut self, range: RB, load_mask: u8) -> &mut Vec<T>
     {
-        let ok_chunks = self.previous_headers.get_in_all(&range);
-        let mut cln = BTreeSet::new();
+        self.result_buffer.clear();
+        let ok_chunks = self.output_stream.previous_headers.get_in_all(1, &range);
+        let mut cln = HashMap::new();
         for pos in ok_chunks {
             let db = self.load_page(pos);
             // Loading page has no effect on the db, so have to workaround the borrow checker
-            let db = unsafe { &mut *db };
-            let slice = db.prepare_key_range(&range);
-            for j in db.resolve_key_range(slice) {
-                cln.replace(j.clone1(db.heap()));
+            for j in db.key_range(range.clone()) {
+                let cloned = Self::process_items(db, j, load_mask);
+                cln.insert(cloned.first(), cloned);
             }
         }
-
-
         // Now search in the current portion
         self.db.sort_self();
-        let slice = self.db.prepare_key_range(&range);
-        for j in self.db.resolve_key_range(slice) {
-            cln.replace(j.clone1(self.db.heap()));
+        for j in self.db.key_range(range) {
+            let cloned = Self::process_items(&self.db, j, load_mask);
+            cln.insert(cloned.first(), cloned);
         }
-        self.result_buffer = cln.into_iter().collect();
-        &self.result_buffer
+        self.result_buffer = cln.into_values().collect();
+        self.result_buffer.sort_by_key(T::first);
+        &mut self.result_buffer
     }
 
-    fn load_page(&mut self, page_loc: u64) -> *mut TableBase<T> {
-        let loader = || {
-            self.output_stream.seek(SeekFrom::Start(page_loc)).unwrap();
-            TableBase::<T>::from_reader_and_heap(&mut self.output_stream, &[])
+    fn load_page(&mut self, page_loc: u64) -> &mut TableT {
+        let output_stream = &mut self.output_stream;
+        let loader = move || {
+            let page = output_stream.get_page(page_loc);
+            TableT::from_reader_and_heap(page, &[])
         };
 
         self.buffer_pool.load_page(page_loc, loader)
@@ -111,61 +143,73 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
 
     // Constructs instance of database from a file generated previously.
     // Binary format should be consecutive array of DbBase flushes.
-    pub fn read_from_file<R: Read>(r: R, output_stream: Writer) -> Self {
+    pub fn read_from_file(r: Writer) -> Self {
         Self {
-            previous_headers: ChunkHeaderIndex::from_reader_and_heap(r, &[]),
-            db: TableBase::default(),
+            db: TableT::default(),
             buffer_pool: BufferPool::default(),
             result_buffer: Default::default(),
-            output_stream,
+            output_stream: PageSerializer::create_from_reader(r),
         }
     }
 
-    #[cfg(test)]
-    pub fn get_prev_headers(&self) -> &ChunkHeaderIndex<T> {
-        &self.previous_headers
-    }
-    #[cfg(test)]
-    pub fn get_output_stream_len(&mut self) -> usize {
-        self.output_stream.stream_position().unwrap() as usize
-    }
-    #[cfg(test)]
-    pub fn get_data(&self) -> &Vec<T> {
-        self.db.get_data()
+    pub fn serializer(&mut self) -> &mut PageSerializer<Writer> {
+        &mut self.output_stream
     }
 
-    pub fn force_flush(&mut self) -> Option<(ChunkHeader<T>, Vec<T>)> {
+
+    pub fn compact(&mut self) {
+        let mut seen_keys = HashSet::new();
+        let mut storage = Vec::new();
+        self.force_flush();
+        for stream_pos in self.output_stream.previous_headers.get_in_all(1, &RangeFull) {
+            let db = self.load_page(stream_pos);
+            for j in db.key_range(RangeFull) {
+                if seen_keys.insert(j.first()) {
+                    storage.push(Self::process_items(db, j, u8::MAX));
+                }
+            }
+            self.output_stream.free_page(stream_pos);
+        }
+        storage.sort_by_key(|a| a.first());
+        println!("Got keys {:?}", storage);
+        storage.dedup_by_key(|a| a.first());
+        for j in storage {
+            self.store(j);
+        }
+    }
+    pub fn force_flush(&mut self) -> Option<(ChunkHeader, Vec<T>)> {
         if self.db.len() == 0 {
+            log::debug!("Not flushing because len 0");
             return None;
         }
-
-        let stream_pos = self.output_stream.stream_position().unwrap();
-        let db = std::mem::take(&mut self.db);
-        let (header, res) = db.force_flush(&mut self.output_stream);
-        self.previous_headers.push(stream_pos, header.clone());
-        println!("Flushed to {}", stream_pos);
-        Some((header, res))
+        let mut writer: Cursor<Vec<u8>> = Cursor::default();
+        let mut db = std::mem::take(&mut self.db);
+        let (header, rest_data) = db.force_flush(&mut writer);
+        writer.set_position(0);
+        let stream_len = writer.stream_len().unwrap();
+        let stream_pos = self.output_stream.add_page(writer, stream_len, header.clone());
+        log::debug!("Flushed to {} {}", stream_pos, stream_len);
+        Some((header, rest_data))
     }
 }
 
-impl<T: SuitableDataType, Writer: Write + Seek + Read> Debug for TableManager<T, Writer> {
+impl<T: SuitableDataType, TableT, Writer: Write + Seek + Read> Debug for TableManager<T, TableT, Writer> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DbManager")
-            .field("current_data", &self.db)
-            .field("prev_headers", &self.previous_headers)
+            // .field("current_data", &self.db)
+            .field("prev_headers", &self.output_stream.previous_headers)
             .finish()
     }
 }
 
-impl<T: SuitableDataType> Default for TableManager<T> {
+impl<T: SuitableDataType> Default for TableManager<T, TableBase<T>> {
     fn default() -> Self {
         let db = TableBase::default();
         Self {
             db,
-            output_stream: default_mem_writer(),
+            output_stream: PageSerializer::create(Cursor::new(Vec::new())),
             buffer_pool: Default::default(),
-            previous_headers: Default::default(),
-            result_buffer: Default::default()
+            result_buffer: Default::default(),
         }
     }
 }
@@ -184,10 +228,3 @@ pub fn assert_no_dups<T: PartialOrd + Debug>(a: &[T]) -> bool {
     true
 }
 
-
-#[test]
-fn test_empty_file() {
-    use crate::DataType;
-    let empty: &[u8] = &[];
-    dbg!(TableManager::<DataType>::read_from_file(empty, Cursor::new(Vec::new())));
-}

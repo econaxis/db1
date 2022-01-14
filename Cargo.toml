@@ -1,22 +1,20 @@
-cargo-features=["edition2021"]
 [package]
 name = "db1"
 version = "0.1.0"
-edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rand = "*"
-rand_chacha = "0.3.1"
 log = "*"
 env_logger = "*"
 zstd = "*"
-
+rand = "*"
+rand_chacha = "0.3.1"
 
 [lib]
 path="src/c_lib.rs"
-name = "db1"
+name = "db2"
 crate-type = ["cdylib"]
 
 [workspace]
+

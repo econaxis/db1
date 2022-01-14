@@ -1,18 +1,18 @@
 use std::collections::HashMap;
 use std::iter::FromIterator;
 
-use crate::suitable_data_type::SuitableDataType;
-use crate::table_base::TableBase;
 
-pub struct BufferPool<T: SuitableDataType> {
+
+
+pub struct BufferPool<TableT> {
     // Maps from location -> last use time
     last_use: HashMap<u64, u64>,
     time: u64,
     // Maps from location -> actual in-memory database
-    buffer_pool: HashMap<u64, TableBase<T>>,
+    buffer_pool: HashMap<u64, TableT>,
 }
 
-impl<T: SuitableDataType> Default for BufferPool<T> {
+impl<TableT> Default for BufferPool<TableT> {
     fn default() -> Self {
         Self {
             last_use: Default::default(),
@@ -22,7 +22,7 @@ impl<T: SuitableDataType> Default for BufferPool<T> {
     }
 }
 
-impl<T: SuitableDataType> BufferPool<T> {
+impl<TableT> BufferPool<TableT> {
     const MAX_BUFFERPOOL_SIZE: usize = 200;
 
     #[cfg(test)]
@@ -31,11 +31,11 @@ impl<T: SuitableDataType> BufferPool<T> {
         self.buffer_pool.clear();
     }
 
-    pub fn load_page<Loader: FnOnce() -> TableBase<T>>(
+    pub fn load_page<Loader: FnOnce() -> TableT>(
         &mut self,
         location: u64,
         loader: Loader,
-    ) -> &mut TableBase<T> {
+    ) -> &mut TableT {
         self.time += 1;
         self.evict_if_necessary();
         self.last_use
@@ -75,7 +75,7 @@ mod test {
 
     #[test]
     fn test_buffer_pool1() {
-        type MyBufferPool = BufferPool<DataType>;
+        type MyBufferPool = BufferPool<TableBase<DataType>>;
         // Required for this test to work
         assert!(MyBufferPool::MAX_BUFFERPOOL_SIZE >= 5);
         assert!(MyBufferPool::MAX_BUFFERPOOL_SIZE < 1000000);

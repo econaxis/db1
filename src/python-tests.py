@@ -19,7 +19,18 @@ from libpythonlib import *
 prev_pkeys = set()
 data = []
 for i in range(0, 1000):
-    value = (i * 10, random.randint(1, 100000), "12345678", "12345", 1, 1, 1, 1, 1, True)
+    value = (
+        i * 10,
+        random.randint(1, 100000),
+        "12345678",
+        "12345",
+        1,
+        1,
+        1,
+        1,
+        1,
+        True,
+    )
     if value[0] in prev_pkeys:
         continue
     else:
@@ -52,7 +63,7 @@ for index, elem in enumerate(data):
         li = get_range(data[index_][0], data[index1_][0])
         try:
             one = list(map(lambda k: k["timestamp"], li))
-            two = list(map(lambda k: k[0], data[index_:index1_ + 1]))
+            two = list(map(lambda k: k[0], data[index_ : index1_ + 1]))
             assert one == two
             assert len(li) == index1_ - index_ + 1
         except Exception as e:

@@ -1,22 +1,25 @@
 #![cfg(test)]
 
 use std::cell::RefCell;
-use std::fs::File;
+use std::collections::HashSet;
+use std::hash::Hash;
 use std::io::{Cursor, Seek, SeekFrom, Write};
-use std::ops::Range as stdRange;
+use std::ops::{Range as stdRange, RangeFull};
 
 use rand::{random, Rng};
 use rand::distributions::Alphanumeric;
 use rand::prelude::SliceRandom;
 use rand::SeedableRng;
-use rand_chacha::ChaCha20Rng;
+use serializer::{DbPageManager, PageSerializer};
 
 use crate::*;
 use crate::db1_string::Db1String;
+use crate::index::ImageDocument;
 use crate::suitable_data_type::DataType;
 use crate::table_base::TableBase;
+use crate::table_traits::{BasicTable};
 
-fn rand_string(len: usize) -> String {
+pub fn rand_string(len: usize) -> String {
     rand::thread_rng()
         .sample_iter(Alphanumeric)
         .take(len)
@@ -34,56 +37,6 @@ fn vec_equals<T: PartialEq>(a: &Vec<T>, b: &Vec<&T>) -> bool {
     true
 }
 
-#[test]
-fn test_heap_struct() {
-    #[derive(PartialEq, PartialOrd, Eq, Ord, Clone, Debug)]
-    struct HeapTest {
-        a: Db1String,
-    }
-    impl SuitableDataType for HeapTest {
-        const REQUIRES_HEAP: bool = true;
-        const TYPE_SIZE: u64 = 18;
-    }
-    impl BytesSerialize for HeapTest {
-        fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, data: W, heap: W1) {
-            self.a.serialize_with_heap(data, heap)
-        }
-    }
-    impl FromReader for HeapTest {
-        fn from_reader_and_heap<R: Read>(r: R, heap: &[u8]) -> Self {
-            Self {
-                a: Db1String::from_reader_and_heap(r, heap),
-            }
-        }
-    }
-
-    let mut db = TableBase::<HeapTest>::default();
-
-    let mut s = Vec::new();
-    for _ in 0..10 {
-        let val = HeapTest {
-            a: rand_string(rand::thread_rng().gen_range(0..10)).into(),
-        };
-        db.store_and_replace(val.clone());
-        if s.iter().find(|a| &&val == a) == None {
-            s.push(val);
-        }
-    }
-    s.sort();
-
-    let mut c = Cursor::new(Vec::new());
-    let (_, result) = db.force_flush(&mut c);
-    assert_eq!(&result, s.as_slice());
-
-    c.seek(SeekFrom::Start(0)).unwrap();
-    let d = TableBase::<HeapTest>::from_reader_and_heap(&mut c, &[]);
-    let heap = d.heap();
-    let mut d = d.get_data().clone();
-    for elem in &mut d {
-        elem.a.resolve(heap);
-    }
-    assert_eq!(&result, &d);
-}
 
 #[test]
 fn test_editable() {
@@ -93,7 +46,7 @@ fn test_editable() {
     db.store_and_replace(DataType(1, 2, 2));
     db.store_and_replace(DataType(0, 1, 1));
     db.force_flush();
-    assert_eq!(&vec![DataType(0, 1, 1), DataType(1, 2, 2)], db.get_in_all(0..=1));
+    assert_eq!(&vec![DataType(0, 1, 1), DataType(1, 2, 2)], db.get_in_all(0..=1, u8::MAX));
 }
 
 #[test]
@@ -108,50 +61,48 @@ fn test_works_with_std_file() {
     run_test_with_db(db);
 }
 
-#[test]
-fn test_crash_in_middle() {
-    let mut buf = Vec::new();
-    let cursor = Cursor::new(&mut buf);
-    let mut db = TableManager::new(cursor);
-    let flush_size = TableManager::<DataType>::FLUSH_CUTOFF;
-
-    let mut last_lens: Vec<usize> = Vec::new();
-    for i in generate_int_range(0, 5 * flush_size) {
-        let i = i as u8;
-        db.store_and_replace(DataType(i, i, i));
-
-        if Some(&db.get_output_stream_len()) != last_lens.last() {
-            last_lens.push(db.get_output_stream_len() as usize);
-        }
-    }
-    println!("Last lens {}", last_lens.len());
-    assert!(
-        last_lens.len() >= 4,
-        "Number of different chunks must be larger than 10 for test to be effective"
-    );
-    std::mem::drop(db);
-    let mut tuples = 0;
-    for j in last_lens {
-        if j == 0 {
-            continue;
-        }
-        let mut current_tuples = 0;
-        let mut b = Cursor::new(&buf[0..j]);
-
-        while !b.is_empty() {
-            let db = TableBase::<DataType>::from_reader_and_heap(&mut b, &[]);
-            current_tuples += db.len();
-        }
-        assert_eq!(current_tuples, tuples + flush_size as usize);
-        tuples = current_tuples;
-    }
-}
+// #[test]
+// fn test_crash_in_middle() {
+//     let mut buf = Vec::new();
+//     let cursor = Cursor::new(&mut buf);
+//     let mut db = TableManager::new(cursor);
+//     let flush_size = TableManager::<DataType>::FLUSH_CUTOFF;
+//
+//     let mut last_lens: HashSet<usize> = HashSet::new();
+//     for i in generate_int_range(0, 5 * flush_size) {
+//         let i = i as u8;
+//         db.store_and_replace(DataType(i, i, i));
+//
+//         last_lens.insert(db.get_output_stream_len() as usize);
+//     }
+//     println!("Last lens {}", last_lens.len());
+//     assert!(
+//         last_lens.len() >= 4,
+//         "Number of different chunks must be larger than 10 for test to be effective"
+//     );
+//     std::mem::drop(db);
+//     let mut tuples = 0;
+//     for j in last_lens {
+//         if j == 0 {
+//             continue;
+//         }
+//         let mut current_tuples = 0;
+//         let mut b = Cursor::new(&buf[0..j]);
+//
+//         while !b.is_empty() {
+//             let db = TableBase::<DataType>::from_reader_and_heap(&mut b, &[]);
+//             current_tuples += db.len();
+//         }
+//         assert_eq!(current_tuples, tuples + flush_size as usize);
+//         tuples = current_tuples;
+//     }
+// }
 
 #[test]
 fn test_range() {
     let test_range = Range {
-        min: Some(DataType(3, 3, 3)),
-        max: Some(DataType(10, 10, 10)),
+        min: Some(3),
+        max: Some(13),
     };
     assert!(!test_range.overlaps(&(15..20)));
     assert!(test_range.overlaps(&(7..20)));
@@ -166,13 +117,13 @@ fn test_all_findable() {
         solutions.push(val.clone());
         dbm.store(val);
     }
-    solutions.sort();
+    solutions.sort_by_key(DataType::first);
 
     for (iter, j) in solutions.iter().enumerate() {
         for (_iter1, j1) in solutions[iter..].iter().enumerate() {
             let range = j.first()..=j1.first();
-            let mut res = dbm.get_in_all(j.first()..=j1.first()).clone();
-            res.sort();
+            let mut res = dbm.get_in_all(j.first()..=j1.first(), u8::MAX).clone();
+            res.sort_by_key(DataType::first);
             assert_eq!(
                 solutions
                     .iter()
@@ -200,7 +151,7 @@ fn generate_int_range<T>(min: T, max: T) -> Vec<T>
     vec
 }
 
-fn run_test_with_db<T: Write + Read + Seek>(mut dbm: TableManager<DataType, T>) {
+fn run_test_with_db<T: Write + Read + Seek>(mut dbm: TableManager<DataType, TableBase<DataType>, T>) {
     let range: stdRange<u64> = 200..250;
     let mut expecting = Vec::new();
 
@@ -214,12 +165,70 @@ fn run_test_with_db<T: Write + Read + Seek>(mut dbm: TableManager<DataType, T>) 
         }
     }
 
-    let mut res = dbm.get_in_all(range).clone();
-    res.sort();
-    expecting.sort();
+    let mut res = dbm.get_in_all(range, u8::MAX).clone();
+    res.sort_by_key(|a| a.first());
+    expecting.sort_by_key(DataType::first);
 
     assert_eq!(expecting, res);
 }
+
+pub fn mess_up<W: Read + Write + Seek>(a: &mut PageSerializer<W>) {
+    let len: usize = rand::random::<u8>() as usize + 100;
+    let bytes = rand_string(len).into_bytes();
+    let mut buf = Cursor::new(bytes);
+    a.add_page(buf, len as u64, ChunkHeader {
+        ty: 3,
+        type_size: 0,
+        length: 0,
+        heap_size: 0,
+        limits: Default::default(),
+        compressed_size: 0
+    });
+}
+
+fn data_type_test<T: SuitableDataType + Hash + PartialEq, Table>(mut creator: Box<dyn FnMut(u64) -> T>)
+    where Table: BasicTable<T> {
+    let mut writer = Cursor::default();
+    let mut dbm = TableManager::<T, Table, &mut Cursor<Vec<u8>>>::new(&mut writer);
+
+    for i in 0..1000 {
+        dbm.store_and_replace(creator(i));
+        mess_up(dbm.serializer());
+    }
+
+    dbm.force_flush();
+    let mut dbm_data = dbm.get_in_all(RangeFull, u8::MAX).clone();
+    std::mem::drop(dbm);
+    println!("Writer size: {}", writer.position());
+    writer.seek(SeekFrom::Start(0));
+    let writer1 = writer.clone();
+    let mut dbm1 = TableManager::<T, Table>::read_from_file(writer1);
+
+    let mut dbm1_data = dbm1.get_in_all(RangeFull, u8::MAX).clone();
+
+    dbm_data.sort_by_key(T::first);
+    dbm1_data.sort_by_key(T::first);
+    for (a, b) in dbm1_data.iter().zip(dbm_data.iter()) {
+        assert_eq!(a, b);
+    }
+    assert_eq!(dbm_data, dbm1_data);
+    dbg!(dbm_data, dbm1_data);
+}
+
+#[test]
+fn image_doc_test() {
+    data_type_test::<ImageDocument, TableBase<ImageDocument>>(Box::new(|i| ImageDocument::new(i, rand_string(30), rand_string(30), rand_string(30))));
+}
+
+#[test]
+fn document_doc_test() {
+    data_type_test::<Document, TableBase<Document>>(Box::new(|i| Document {
+        id: i as u32,
+        name: "hfel".into(),
+        document: "fdlksaf sa".into(),
+    }));
+}
+
 
 #[test]
 fn test_key_lookup() {
@@ -232,7 +241,7 @@ fn test_key_lookup() {
         db.store(DataType(i * 4, rng.gen(), rng.gen()));
     }
     db.sort_self();
-    dbg!(db.key_range(&(2..30)));
+    dbg!(db.key_range_resolved(2..30));
 }
 
 #[test]
@@ -283,52 +292,10 @@ fn test2() {
     }
 }
 
-#[test]
-fn test3() {
-    use chunk_header::ChunkHeaderIndex;
-    use rand::{thread_rng, Rng};
-    use suitable_data_type::DataType;
-
-    let mut buffer: Vec<u8> = Vec::new();
-    let mut dbs = Vec::new();
-    for _ in generate_int_range(0, 150) {
-        let mut db = TableBase::<DataType>::default();
-
-        let mut rng = thread_rng();
-        for j in 0..10 {
-            db.store(DataType(j, rng.gen(), rng.gen()));
-        }
-        let old_data = db.force_flush(&mut buffer);
-        dbs.push(old_data);
-    }
-
-    let mut reader = Cursor::new(&buffer);
-
-    let res = ChunkHeaderIndex::<DataType>::from_reader_and_heap(&mut reader, &[]);
-
-    assert_eq!(res.0.len(), dbs.len());
-    assert_eq!(res.0.len(), 150);
-
-    fn dt_full_compare(one: &Option<DataType>, two: &Option<DataType>) -> bool {
-        let one = one.as_ref().unwrap();
-        let two = two.as_ref().unwrap();
-        one.0 == two.0 && one.1 == two.1 && one.2 == two.2
-    }
-    for ((_pos, chunk1), (chunk2, _data)) in res.0.iter().zip(dbs.iter()) {
-        assert!(dt_full_compare(&chunk1.limits.min, &chunk2.limits.min));
-        assert!(dt_full_compare(&chunk1.limits.max, &chunk2.limits.max));
-    }
-
-    reader.seek(SeekFrom::Start(0)).unwrap();
-    let test_out_stream = heap_writer::default_mem_writer();
-    let tbm = TableManager::<DataType>::read_from_file(reader, test_out_stream);
-    assert_eq!(tbm.get_prev_headers(), &res);
-    dbg!(tbm);
-}
 
 thread_local! {
     // pub static RAND: RefCell<ChaCha20Rng> = RefCell::new(ChaCha20Rng::from_entropy());
-    pub static RAND: RefCell<ChaCha20Rng> = RefCell::new(ChaCha20Rng::seed_from_u64(1));
+    pub static RAND: RefCell<rand_chacha::ChaCha20Rng> = RefCell::new(rand_chacha::ChaCha20Rng::seed_from_u64(1));
 }
 fn rand_range(max: u8) -> u8 {
     RAND.with(|rand| {
@@ -357,7 +324,7 @@ fn test_edits_valid() {
         let index = index as u64;
 
 
-        let val = dbm.get_in_all(index..=index);
+        let val = dbm.get_in_all(index..=index, u8::MAX);
         match val.as_slice() {
             [a] => {
                 assert_eq!(a.1, *i)
@@ -372,8 +339,35 @@ fn test_edits_valid() {
 
 
 #[test]
-fn testtmp() {
-    let file = File::open("/home/henry/imgrepo/testfile/test-imgrepo.db").unwrap();
-    let _file1 = file.try_clone().unwrap();
-    let _dbm = TableManager::<Document>::read_from_file(file, Cursor::default());
+fn compaction() {
+    let mut tbm = TableManager::<Document>::default();
+    for i in 0..3000 {
+        tbm.store(Document {
+            id: i % 1000,
+            name: Db1String::from("hello world"),
+            document: Db1String::from("hfdalkd salfd"),
+        });
+        tbm.force_flush();
+    }
+
+    tbm.compact();
+    dbg!(tbm.get_in_all(0..3, u8::MAX));
+    let mut stream = tbm.inner_stream();
+
+    stream.set_position(0);
+    let mut tbm = TableManager::<Document>::read_from_file(stream);
+    dbg!(tbm.get_in_all(0..3, u8::MAX));
+}
+
+#[test]
+fn use_table_manager_with_hash() {
+    let mut tbm = TableManager::<DataType, TableBase<DataType>>::new(Cursor::default());
+
+    for i in 0..1000 {
+        tbm.store(DataType((i % 255) as u8, 1, 1));
+    }
+    for i in 0..1000 {
+        let i = (i % 255) as u8;
+        assert_eq!(tbm.get_in_all(i as u64..=i as u64, u8::MAX), &[DataType(i, 1, 1)]);
+    }
 }

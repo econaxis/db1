@@ -1,18 +1,19 @@
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, Write};
+use std::mem::MaybeUninit;
 use std::ops::RangeBounds;
 
-use crate::{BytesSerialize, ChunkHeader, FromReader, QueryableDataType, Range, SuitableDataType};
+use crate::{BytesSerialize, ChunkHeader, FromReader, Range, SuitableDataType};
 use crate::compressor;
 use crate::heap_writer;
 use crate::heap_writer::default_mem_writer;
-use crate::table_manager::assert_no_dups;
+use crate::table_traits::BasicTable;
 
-impl<T: Ord + Clone> Default for TableBase<T> {
+impl<T> Default for TableBase<T> {
     fn default() -> Self {
         Self {
             heap: Vec::new(),
-            limits: Range::new(None),
+            limits: Range::new(None, None),
             data: Vec::new(),
             is_sorted: true,
         }
@@ -29,7 +30,7 @@ impl<T: PartialEq> PartialEq for TableBase<T> {
 // Only in-memory operations supported.
 pub struct TableBase<T> {
     data: Vec<T>,
-    limits: Range<T>,
+    pub limits: Range<u64>,
     is_sorted: bool,
     heap: Vec<u8>,
 }
@@ -46,19 +47,21 @@ impl<T: SuitableDataType> Debug for TableBase<T> {
 
 fn read_to_vec<R: Read>(mut r: R, len: usize) -> Vec<u8> {
     let mut buf = Vec::with_capacity(len);
-    unsafe {
-        let uninit_slice = std::slice::from_raw_parts_mut(buf.as_mut_ptr(), len);
-        r.read_exact(uninit_slice).unwrap();
-        buf.set_len(len);
-    }
+    buf.resize(len, 0);
+    r.read_exact(&mut buf).unwrap();
+    buf
+}
+
+pub fn read_to_buf<R: Read, const N: usize>(mut r: R) -> [u8; N] {
+    let mut buf = [0u8; N];
+    r.read_exact(&mut buf).unwrap();
     buf
 }
 
 impl<T: SuitableDataType> FromReader for TableBase<T> {
     fn from_reader_and_heap<R: Read>(mut r: R, _heap: &[u8]) -> Self {
         assert_eq!(_heap.len(), 0);
-        let chunk_header = ChunkHeader::<T>::from_reader_and_heap(&mut r, _heap);
-
+        let chunk_header = ChunkHeader::from_reader_and_heap(&mut r, _heap);
 
         let mut buf = read_to_vec(&mut r, chunk_header.calculate_total_size());
         let (real_data, real_heap) = {
@@ -97,45 +100,15 @@ impl<T: SuitableDataType> TableBase<T> {
             self.store(elem.clone());
         }
     }
-    pub fn heap(&self) -> &[u8] {
-        &self.heap
-    }
 }
 
 
-const USE_COMPRESSION: bool = true;
+const USE_COMPRESSION: bool = false;
 
 impl<T: SuitableDataType> TableBase<T> {
-    pub(crate) fn len(&self) -> usize {
-        self.data.len()
-    }
-
-    // Sort by primary key
-    pub fn sort_self(&mut self) {
-        self.is_sorted = true;
-        self.data.sort_by(|a, b| a.partial_cmp(b).unwrap())
-    }
-
-    // Store tuple into self
-    pub(crate) fn store(&mut self, t: T) {
-        debug_assert!(self.data.iter().find(|x| x == &&t).is_none());
-        self.limits.add(&t);
-        self.data.push(t);
-        self.is_sorted = false;
-    }
-
-    pub(crate) fn store_and_replace(&mut self, t: T) -> Option<T> {
-        if let Some(found) = self.data.iter_mut().find(|x| x == &&t) {
-            Some(std::mem::replace(found, t))
-        } else {
-            self.store(t);
-            None
-        }
-    }
-
-    // Get the chunk header of current in-memory data
-    pub(crate) fn get_chunk_header(&self, heap_size: u64) -> ChunkHeader<T> {
-        ChunkHeader::<T> {
+    fn get_chunk_header(&self, heap_size: u64) -> ChunkHeader {
+        ChunkHeader {
+            ty: 1,
             type_size: T::TYPE_SIZE as u32,
             length: self.data.len() as u32,
             heap_size: heap_size as u64,
@@ -144,14 +117,71 @@ impl<T: SuitableDataType> TableBase<T> {
         }
     }
 
+    // Get slice corresponding to a primary key range
+    pub(crate) fn key_range_resolved<RB: RangeBounds<u64>>(&self, range: RB) -> Vec<T> {
+        use std::ops::Bound::*;
+        debug_assert!(self.data.is_sorted_by(|a, b| a.first().partial_cmp(&b.first())));
+        let start_idx = self.data.partition_point(|a| match range.start_bound() {
+            Included(x) => a < x,
+            Excluded(x) => a <= x,
+            Unbounded => false,
+        });
+        let end_idx = self.data.partition_point(|a| match range.end_bound() {
+            Included(x) => a <= x,
+            Excluded(x) => a < x,
+            Unbounded => true,
+        });
+        assert!(start_idx <= end_idx);
+
+        self.data.get(start_idx..end_idx).unwrap().iter().map(|a| {
+            let mut a = a.clone();
+            a.resolve_item(&self.heap, u8::MAX);
+            a
+        }).collect()
+    }
+}
+
+
+impl<T: SuitableDataType> BasicTable<T> for TableBase<T> {
+    fn heap(&self) -> &[u8] {
+        &self.heap
+    }
+
+    fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    // Sort by primary key
+    fn sort_self(&mut self) {
+        self.is_sorted = true;
+        self.data.sort_by_key(|a| a.first())
+    }
+
+    // Store tuple into self
+    fn store(&mut self, t: T) {
+        debug_assert!(self.data.iter().find(|x| x.first() == t.first()).is_none());
+        self.limits.add(t.first());
+        self.data.push(t);
+        self.is_sorted = false;
+    }
+
+    fn store_and_replace(&mut self, t: T) -> Option<T> {
+        if let Some(found) = self.data.iter_mut().find(|x| x.first() == t.first()) {
+            Some(std::mem::replace(found, t))
+        } else {
+            self.store(t);
+            None
+        }
+    }
+
+
     // Clear in-memory contents and flush to disk
     // Flushes like this: header - data - heap
     // We have to serialize to data + heap first (in a separate buffer), so we can calculate the data length and heap offset.
     // Then, we put data length + heap offset into the header and serialize that.
-
-    pub(crate) fn force_flush<W: Write>(mut self, mut w: W) -> (ChunkHeader<T>, Vec<T>) {
+    fn force_flush<W: Write>(&mut self, mut w: W) -> (ChunkHeader, Vec<T>) {
+        // Get the chunk header of current in-memory data
         self.sort_self();
-        println!("Limits {:?}", self.limits);
 
         let mut heap = heap_writer::default_heap_writer();
         let mut data = default_mem_writer();
@@ -177,18 +207,14 @@ impl<T: SuitableDataType> TableBase<T> {
 
         (header, vec)
     }
-}
 
-impl<T: QueryableDataType> TableBase<T> {
     // Get slice corresponding to a primary key range
-
-    pub fn prepare_key_range<RB: RangeBounds<u64>>(&mut self, range: &RB) -> std::ops::Range<usize> {
+    fn key_range<RB: RangeBounds<u64>>(&self, range: RB) -> Vec<&T> {
         use std::ops::Bound::*;
-        if self.is_sorted {
-            debug_assert!(self.data.is_sorted());
-        } else {
-            assert!(self.data.is_sorted());
+        if !self.limits.overlaps(&range) {
+            return Vec::new();
         }
+        debug_assert!(self.data.is_sorted_by(|a, b| a.first().partial_cmp(&b.first())));
         let start_idx = self.data.partition_point(|a| match range.start_bound() {
             Included(x) => a < x,
             Excluded(x) => a <= x,
@@ -201,48 +227,10 @@ impl<T: QueryableDataType> TableBase<T> {
         });
         assert!(start_idx <= end_idx);
 
-        let slice = self.data.get_mut(start_idx..end_idx).unwrap();
-        if T::REQUIRES_HEAP {
-            // for s in slice.iter_mut() {
-            //     s.resolve(&self.heap);
-            // }
-        }
-        (start_idx..end_idx)
-    }
-    pub fn resolve_key_range(&self, range: std::ops::Range<usize>) -> &[T] {
-        self.data.get(range).unwrap()
-    }
-
-
-    pub(crate) fn key_range<RB: RangeBounds<u64>>(&mut self, range: &RB) -> &[T] {
-        use std::ops::Bound::*;
-        if self.is_sorted {
-            debug_assert!(self.data.is_sorted());
-        } else {
-            assert!(self.data.is_sorted());
-        }
-        let start_idx = self.data.partition_point(|a| match range.start_bound() {
-            Included(x) => a < x,
-            Excluded(x) => a <= x,
-            Unbounded => false,
-        });
-        let end_idx = self.data.partition_point(|a| match range.end_bound() {
-            Included(x) => a <= x,
-            Excluded(x) => a < x,
-            Unbounded => true,
-        });
-        assert!(start_idx <= end_idx);
-
-        let slice = self.data.get_mut(start_idx..end_idx).unwrap();
-        if T::REQUIRES_HEAP {
-            for s in slice.iter_mut() {
-                s.resolve(&self.heap);
-            }
-        }
-
-        slice
+        self.data.get(start_idx..end_idx).unwrap().iter().collect()
     }
 }
+
 
 #[test]
 fn key_range_test() {
@@ -258,8 +246,8 @@ fn key_range_test() {
     db.store_many(&vec);
     for i in 0..4 {
         for j in i..4 {
-            assert_eq!(db.key_range(&(i..j)), &vec[i as usize..j as usize]);
-            assert_eq!(db.key_range(&(i..=j)), &vec[i as usize..=j as usize]);
+            assert_eq!(db.key_range_resolved(i..j), &vec[i as usize..j as usize]);
+            assert_eq!(db.key_range_resolved(i..=j), &vec[i as usize..=j as usize]);
         }
     }
 }

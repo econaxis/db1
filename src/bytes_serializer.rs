@@ -18,13 +18,6 @@ pub trait BytesSerialize: Sized {
 }
 
 #[macro_export]
-macro_rules! bytes_serializer {
-    ($x: ty) => {
-        impl crate::bytes_serializer::BytesSerialize for $x {}
-    };
-}
-
-#[macro_export]
 macro_rules! from_reader {
     ($x: ty) => {
         impl crate::bytes_serializer::FromReader for $x {
