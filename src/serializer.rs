@@ -1,26 +1,34 @@
-use std::fmt::Arguments;
-use std::io::{Cursor, IoSlice, Read, Seek, SeekFrom, Write};
-use std::io::SeekFrom::Current;
-use std::mem::size_of;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::{Debug, Formatter};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::ops::RangeBounds;
 
-use ::{ChunkHeader, FromReader};
+use {ChunkHeader, FromReader};
 use chunk_header::ChunkHeaderIndex;
-use serializer::PageResult::Good;
+
+use table_base2::TableBase2;
 use table_base::read_to_buf;
 
-pub trait DbPageManager {
-    type WriterType;
-    type ReaderType;
-    fn add_page<R: Read>(self, buf: R, len: u64, _: ChunkHeader) -> u64;
-    fn get_page(self, position: u64) -> Self::ReaderType;
+pub trait DbPageManager<W: Write> {
+    fn add_page(&mut self, buf: Vec<u8>, len: u64, _: ChunkHeader) -> u64;
+    fn get_page(&mut self, position: u64) -> LimitedReader<&'_ mut W>;
+    fn get_in_all(&self, ty: u64, r: Option<u64>) -> Option<u64>;
 }
 
-#[derive(Default)]
-pub struct PageSerializer<W> {
-    pub(crate) file: W,
+#[derive(Debug)]
+pub struct PageSerializer<W: Read + Write + Seek> {
+    pub file: W,
     pub previous_headers: ChunkHeaderIndex,
+    deleted: Vec<(u64, u64)>,
+    pinned: HashSet<u64>,
+    pub cache: HashMap<u64, TableBase2>,
+}
 
+
+impl Default for PageSerializer<Cursor<Vec<u8>>> {
+    fn default() -> Self {
+        Self::create(Cursor::default())
+    }
 }
 
 pub struct LimitedReader<W>(W, usize);
@@ -29,29 +37,76 @@ impl<W> LimitedReader<W> {
     pub(crate) fn size(&self) -> usize {
         self.1
     }
+    pub fn new(w: W, size: usize) -> LimitedReader<W> {
+        assert!(size != 0);
+        LimitedReader(w, size)
+    }
+}
+
+pub struct PageData<'a, W> {
+    w: &'a mut W,
+    pos: u64,
+    len: u64,
+}
+
+impl<'a, W> Debug for PageData<'a, W> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PageData")
+            .field("pos", &self.pos)
+            .field("len", &self.len)
+            .finish()
+    }
 }
 
 enum PageResult<'a, W> {
-    Good(&'a mut W, u64),
-    Deleted(&'a mut W, u64),
+    Good(PageData<'a, W>),
+    Deleted(PageData<'a, W>),
     Eof,
+}
+
+impl<'a, W> Debug for PageResult<'a, W> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Good(x) => f.write_fmt(format_args!("Good {:?}", x)),
+            Self::Deleted(x) => f.write_fmt(format_args!("Deleted {:?}", x)),
+            Self::Eof => f.write_str("Eof"),
+        }
+    }
 }
 
 impl<W: Write + Read + Seek> PageSerializer<W> {
     const CHECK_SEQ: u64 = 3180343028731803290;
     const WORKING_PAGE: u16 = 31920;
-    const WORKING_PAGE_SIZE: u64 = 2;
+    const PAGEOVERHEAD: u64 = 6;
     const DELETED_PAGE: u16 = 21923;
     pub fn replace_inner(&mut self, w: W) -> W {
         std::mem::replace(&mut self.file, w)
     }
 
-    pub fn free_page(&mut self, p: u64) {
+    pub fn free_page(&mut self, ty: u64, pkey: u64) {
         // Check that page is still valid
-        if let PageResult::Good(page, _) = Self::page_checked(&mut self.file, Some(p)) {
-            page.seek(SeekFrom::Current(Self::WORKING_PAGE_SIZE as i64 * -1)).unwrap();
-            page.write_all(&Self::DELETED_PAGE.to_le_bytes()).unwrap();
-            self.previous_headers.0.retain(|a| a.0 != p);
+        let p = self.previous_headers.remove(ty, pkey);
+        if let PageResult::Good(pd) = Self::page_checked(&mut self.file, Some(p)) {
+            assert_eq!(pd.pos, p);
+            pd.w.seek(SeekFrom::Start(p)).unwrap();
+            pd.w.write_all(&Self::DELETED_PAGE.to_le_bytes()).unwrap();
+
+            println!("Deleting page with pos {} len {}", pd.pos, pd.len);
+
+            // self.deleted.push((p, pd.len + Self::PAGEOVERHEAD));
+            // self.deleted.sort_unstable();
+            // let mut new_deleted = Vec::new();
+            // let mut current = self.deleted[0];
+            // for i in &self.deleted[1..] {
+            //     if current.0 + current.1 == i.0 {
+            //         current.1 += i.1;
+            //     } else {
+            //         new_deleted.push(current);
+            //         current = *i;
+            //     }
+            // }
+            // new_deleted.push(current);
+            // self.deleted = new_deleted;
         } else {
             panic!()
         }
@@ -61,51 +116,73 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
         self.file.flush().unwrap();
     }
 
-    fn iter_pages<Handler: FnMut(LimitedReader<&mut W>, u64) -> u64>(mut r: &mut W, mut header_handler: Handler) {
+    fn check_is_valid(r: &mut W) -> bool {
         assert_eq!(r.stream_position().unwrap(), 0);
-        let check_seq = u64::from_le_bytes(read_to_buf(&mut r));
+        let mut u64_buf = [0u8; 8];
+        if r.read_exact(&mut u64_buf).is_err() {
+            return false;
+        }
+        let check_seq = u64::from_le_bytes(u64_buf);
+        check_seq == Self::CHECK_SEQ
+    }
 
-        assert_eq!(check_seq, Self::CHECK_SEQ);
+    fn iter_pages(r: &mut W) -> (Vec<(u64, ChunkHeader)>, Vec<(u64, u64)>) {
+        assert!(Self::check_is_valid(r));
+        let mut v = Vec::new();
+        let mut deleted = Vec::new();
 
         loop {
-            match Self::page_checked(&mut r, None) {
-                PageResult::Good(mut pr, pos) => {
-                    let real_position = pr.stream_position().unwrap();
-                    let len = u32::from_le_bytes(read_to_buf(&mut pr));
-                    let skip = header_handler(LimitedReader(pr, len as usize), pos);
+            match Self::page_checked(r, None) {
+                PageResult::Good(pd) => {
+                    println!("good page {:?}", pd);
+                    let len = pd.len;
+                    let mut reader = LimitedReader::new(pd.w, len as usize);
+                    let ch = Option::<ChunkHeader>::from_reader_and_heap(&mut reader, &[]);
+                    if let Some(ch) = ch {
+                        v.push((pd.pos, ch));
+                    }
+                    let remaining = reader.size() as i64;
+                    r.seek(SeekFrom::Current(remaining)).unwrap();
+                }
+                PageResult::Deleted(pd) => {
+                    println!("deleted page {:?}", pd);
 
+                    let skip = pd.len;
+                    deleted.push((pd.pos, skip as u64));
                     r.seek(SeekFrom::Current(skip as i64)).unwrap();
                 }
-                PageResult::Deleted(mut pr, pos) => {
-                    let skip = u32::from_le_bytes(read_to_buf(&mut pr));
-                    r.seek(SeekFrom::Current(skip as i64)).unwrap();
-                }
-                PageResult::Eof => break
+                PageResult::Eof => break,
             };
         }
+        (v, deleted)
     }
     pub fn create_from_reader(mut w: W) -> Self {
-        let mut v = Vec::new();
-        PageSerializer::iter_pages(&mut w, |mut reader, position| {
-            let ch = Option::<ChunkHeader>::from_reader_and_heap(&mut reader, &[]);
-            if let Some(ch) = ch {
-                let size = ch.calculate_total_size() as u64;
-                log::debug!("Chunk header detected {:?}", ch);
-                v.push((position, ch));
-                size
-            } else {
-                log::debug!("Skip");
-                reader.size() as u64
-            }
-        });
-        let ch = ChunkHeaderIndex(v);
+        w.seek(SeekFrom::Start(0)).unwrap();
+        let (pages, deleted) = PageSerializer::iter_pages(&mut w);
+        let mut ch = ChunkHeaderIndex(BTreeMap::default());
+        for p in pages {
+            ch.push(p.0, p.1);
+        }
         Self {
             file: w,
             previous_headers: ch,
+            deleted,
+            pinned: Default::default(),
+            cache: Default::default(),
+        }
+    }
+    pub fn clone_headers(&self) -> ChunkHeaderIndex {
+        self.previous_headers.clone()
+    }
+    pub fn smart_create(mut w: W) -> Self {
+        if Self::check_is_valid(&mut w) {
+            Self::create_from_reader(w)
+        } else {
+            Self::create(w)
         }
     }
 
-    fn page_checked(file: &mut W, position: Option<u64>) -> PageResult<'_, W> {
+    fn page_checked(mut file: &mut W, position: Option<u64>) -> PageResult<'_, W> {
         let pos = if let Some(pos) = position {
             file.seek(SeekFrom::Start(pos)).unwrap()
         } else {
@@ -114,71 +191,246 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
         let mut u16_bytes = [0u8; 2];
         match file.read_exact(&mut u16_bytes) {
             Ok(_) => {
+                let len = u32::from_le_bytes(read_to_buf(&mut file));
                 let check_val = u16::from_le_bytes(u16_bytes);
                 match check_val {
-                    PageSerializer::<W>::WORKING_PAGE => {
-                        PageResult::Good(file, pos)
-                    }
-                    PageSerializer::<W>::DELETED_PAGE => {
-                        println!("Encountered deleted page at {:?}", position);
-                        PageResult::Deleted(file, pos)
-                    }
-                    _ => panic!("Tried to load page incorrectly at {:?}", position)
+                    PageSerializer::<W>::WORKING_PAGE => PageResult::Good(PageData {
+                        w: file,
+                        pos,
+                        len: len as u64,
+                    }),
+                    PageSerializer::<W>::DELETED_PAGE => PageResult::Deleted(PageData {
+                        w: file,
+                        pos,
+                        len: len as u64,
+                    }),
+                    _ => panic!("Tried to load page incorrectly at {:?}", pos),
                 }
             }
             Err(e) => {
-                log::debug!("Load page wrong {:?} {:?}", position, e);
-                println!("Load page wrong {:?} {:?}", position, e);
+                log::debug!(
+                    "Load page wrong {:?} {:?} Total len {}",
+                    position,
+                    e,
+                    file.stream_len().unwrap()
+                );
+                // println!("Load page wrong {:?} {:?}", position, e);
                 PageResult::Eof
             }
         }
     }
     pub fn create(mut w: W) -> Self {
-        w.write(&Self::CHECK_SEQ.to_le_bytes());
+        w.seek(SeekFrom::Start(0)).unwrap();
+
+        w.write(&Self::CHECK_SEQ.to_le_bytes()).unwrap();
         Self {
+            deleted: Vec::new(),
             file: w,
             previous_headers: ChunkHeaderIndex::default(),
+            pinned: Default::default(),
+            cache: Default::default(),
+        }
+    }
+    pub fn load_page_cached(&mut self, p: u64) -> &mut TableBase2 {
+        const BPOOLSIZE: usize = 500000000;
+        if self.cache.len() >= BPOOLSIZE {
+            let mut unload_count = self.cache.len() - BPOOLSIZE;
+            let keys: Vec<_> = self.cache.keys().cloned().collect();
+            for k in keys {
+                if unload_count == 0 {
+                    break;
+                }
+                if !self.pinned.contains(&k) && k != p {
+                    self.unload_page(k);
+                    unload_count -= 1;
+                }
+            }
+        }
+
+
+        self.pinned.insert(p);
+
+
+        let file = &mut self.file;
+        self.cache.entry(p)
+            .or_insert_with(
+                || {
+                    let page_reader =  Self::file_get_page(file, p);
+
+                    let mut page = TableBase2::from_reader_and_heap(page_reader, &[]);
+                    page.loaded_location = Some(p);
+                    page
+                }
+            )
+    }
+    pub fn file_get_page(file: &mut W, position: u64) -> LimitedReader<&mut W> {
+        match PageSerializer::<W>::page_checked(file, Some(position)) {
+            PageResult::Good(pd) => {
+                let size = pd.len;
+
+                if size == 0 {
+                    println!("Tried to load zero-sized page")
+                }
+
+                log::debug!("Yielding page {} {}", position, pd.len);
+                LimitedReader::new(pd.w, pd.len as usize)
+            }
+            x => {
+                panic!("Got page {:?}", x)
+            }
         }
     }
 
-    pub fn get_in_all<RB: RangeBounds<u64>>(&self, ty: u8, range: &RB) -> Vec<u64> {
-        self.previous_headers.get_in_all(ty, range)
+    pub fn move_file(&mut self) -> W where W: Default {
+        self.unload_all();
+        self.previous_headers.0.clear();
+        std::mem::take(&mut self.file)
+    }
+    fn unload_page(&mut self, p: u64) {
+        println!("Unloading page {p}");
+        let mut page = self.cache.remove(&p).unwrap();
+        if page.dirty {
+            page.force_flush(self);
+        }
+    }
+    pub fn unload_all(&mut self) {
+        if self.file.stream_len().unwrap() == 0 {
+            return;
+        }
+        for i in &self.previous_headers.0.clone() {
+            self.load_page_cached(i.1.location);
+        }
+
+        let keys: Vec<_> = self.cache.keys().cloned().collect();
+        for i in keys {
+            self.unload_page(i);
+        }
+        self.file.flush().unwrap();
+    }
+    pub fn unpin_page(&mut self, page: u64) {
+        assert!(self.pinned.remove(&page));
+    }
+
+    pub fn get_in_all_insert(&self, ty: u64, pkey: u64) -> Option<u64> {
+        let left = self.previous_headers.get_in_one(ty, pkey);
+
+        left.map(|a| a.1.location)
     }
 }
 
 impl<W: Read> Read for LimitedReader<W> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        assert!(self.1 >= buf.len());
+        if self.1 < buf.len() {
+            panic!();
+        }
         self.1 -= buf.len();
         self.0.read(buf)
     }
 }
 
+impl<'a, W: Write + Seek + Read> DbPageManager<W> for PageSerializer<W> {
+    fn add_page(&mut self, buf: Vec<u8>, size: u64, ch: ChunkHeader) -> u64 {
+        assert_eq!(buf.len(), size as usize);
+        // Check for deleted pages
+        let new_pos = {
+            // if let Some((ind, (pos, _))) = self.deleted.iter().enumerate().filter(|(_, x)| x.1 >= size).next() {
+            //     let pos = *pos;
+            //     println!("Using deleted page!");
+            //     self.file.seek(SeekFrom::Start(pos)).unwrap();
+            //     self.deleted.remove(ind);
+            //     pos
+            // } else {
+            self.file.seek(SeekFrom::End(0)).unwrap()
+            // }
+        };
 
-impl<'a, W: Write + Seek + Read> DbPageManager for &'a mut PageSerializer<W> {
-    type WriterType = Cursor<Vec<u8>>;
-    type ReaderType = LimitedReader<&'a mut W>;
-    fn add_page<R: Read>(self, mut buf: R, size: u64, ch: ChunkHeader) -> u64 {
-        // Unchecked give out page
-        let new_pos = self.file.seek(SeekFrom::End(0)).unwrap();
-        self.file.write(&PageSerializer::<W>::WORKING_PAGE.to_le_bytes()).unwrap();
+        self.file
+            .write(&PageSerializer::<W>::WORKING_PAGE.to_le_bytes())
+            .unwrap();
         self.file.write(&(size as u32).to_le_bytes()).unwrap();
-        let _length_added = std::io::copy(&mut buf, &mut self.file).unwrap();
+        self.file.write_all(&buf).unwrap();
 
         self.previous_headers.push(new_pos, ch);
         new_pos
     }
 
-    fn get_page(self, position: u64) -> Self::ReaderType {
-        if let PageResult::Good(mut page, _) = PageSerializer::<W>::page_checked(&mut self.file, Some(position)) {
-            let size = u32::from_le_bytes(read_to_buf(&mut page));
+    fn get_page(&mut self, position: u64) -> LimitedReader<&'_ mut W> {
+        Self::file_get_page(&mut self.file, position)
+    }
 
-            if size == 0 {
-                log::info!("Tried to load deleted page")
+
+    fn get_in_all(&self, ty: u64, r: Option<u64>) -> Option<u64> {
+        let l = self.previous_headers.get_in_one(ty, r.unwrap_or(u64::MAX));
+        if let Some((_, ch)) = l {
+            if r.is_some() && !ch.ch.limits.overlaps(&(r.unwrap()..=r.unwrap())) {
+                None
+            } else {
+                Some(ch.location)
             }
-            LimitedReader(page, size as usize)
         } else {
-            panic!()
+            None
         }
     }
+}
+
+impl<W: Read + Write + Seek> Drop for PageSerializer<W> {
+    fn drop(&mut self) {
+        // self.unload_all()
+    }
+}
+
+#[test]
+fn serializer_works() {
+    use ::Range;
+    
+    let default_ch = ChunkHeader {
+        ty: 0,
+        tot_len: 0,
+        type_size: 0,
+        tuple_count: 0,
+        heap_size: 0,
+        limits: Range {
+            min: Some(0),
+            max: Some(0),
+        },
+        compressed_size: 0,
+    };
+    let mut ps = PageSerializer::default();
+    ps.add_page(vec![0, 1, 2, 3, 4, 5], 6, default_ch.clone());
+    ps.add_page(vec![5, 6, 9, 1, 2, 3], 6, default_ch);
+
+    let mut f = std::mem::take(&mut ps.file);
+    f.set_position(0);
+    let ps1 = PageSerializer::create_from_reader(f);
+    dbg!(ps1.get_in_all(0, None));
+    dbg!(&ps1.previous_headers);
+}
+
+#[test]
+fn delete_works() {
+    use Range;
+    let mut ps = PageSerializer::default();
+    let loc = ps.add_page(
+        vec![1u8; 100],
+        100,
+        ChunkHeader {
+            ty: 0,
+            tot_len: 0,
+            type_size: 0,
+            tuple_count: 0,
+            heap_size: 0,
+            limits: Range {
+                min: Some(3),
+                max: Some(3),
+            },
+            compressed_size: 0,
+        },
+    );
+
+    assert_eq!(ps.get_in_all(0, Some(3)), Some(loc));
+    ps.free_page(0, 3);
+    assert_eq!(ps.get_in_all(0, Some(3)), None);
+
+    let ps1 = PageSerializer::create_from_reader(std::mem::take(&mut ps.file));
+    assert_eq!(ps1.get_in_all(0, Some(3)), None);
 }

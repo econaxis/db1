@@ -7,7 +7,6 @@ use table_base::read_to_buf;
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
 use crate::chunk_header::slice_from_type;
-use crate::suitable_data_type::{ SuitableDataType};
 
 const CHECK_SEQUENCE: u16 = 22859;
 
@@ -26,11 +25,11 @@ impl BytesSerialize for OptionState {
 impl FromReader for OptionState {
     fn from_reader_and_heap<R: Read>(mut r: R, _heap: &[u8]) -> Self {
         let mut buf = [0u8; 1];
-        r.read_exact(&mut buf);
+        r.read_exact(&mut buf).unwrap();
         match buf[0] {
             0 => OptionState::None,
             1 => OptionState::Some,
-            _ => panic!()
+            _ => panic!(),
         }
     }
 }
@@ -40,8 +39,8 @@ impl BytesSerialize for Range<u64> {
         w.write_all(&CHECK_SEQUENCE.to_le_bytes()).unwrap();
         if self.min.is_some() && self.max.is_some() {
             OptionState::Some.serialize_with_heap(&mut w, &mut _heap);
-            w.write_all(&self.min.unwrap().to_le_bytes());
-            w.write_all(&self.max.unwrap().to_le_bytes());
+            w.write_all(&self.min.unwrap().to_le_bytes()).unwrap();
+            w.write_all(&self.max.unwrap().to_le_bytes()).unwrap();
         } else {
             OptionState::None.serialize_with_heap(&mut w, &mut _heap);
         }
@@ -85,10 +84,10 @@ impl Range<u64> {
     // Adds new element to the range, potentially expanding the min and max extrema
     pub fn add(&mut self, new_elt: u64) {
         if Self::check_else_true(Some(new_elt), self.min, |new, min| new < min) {
-            self.min = Some(new_elt.clone());
+            self.min = Some(new_elt);
         }
         if Self::check_else_true(Some(new_elt), self.max, |new, max| new > max) {
-            self.max = Some(new_elt.clone());
+            self.max = Some(new_elt);
         }
     }
 }
@@ -108,9 +107,7 @@ impl FromReader for Range<u64> {
                     max: Some(max),
                 }
             }
-            OptionState::None => {
-                Self::default()
-            }
+            OptionState::None => Self::default(),
         }
     }
 }
@@ -136,13 +133,24 @@ impl Range<u64> {
         }
     }
 }
+impl RangeBounds<u64> for Range<u64> {
+    fn start_bound(&self) -> Bound<&u64> {
+        match &self.min {
+            None => Bound::Unbounded,
+            Some(x) => Bound::Included(x)
+        }
+    }
 
+    fn end_bound(&self) -> Bound<&u64> {
+        match &self.max {
+            None => Bound::Unbounded,
+            Some(x) => Bound::Included(x)
+        }
+    }
+}
 
 impl<T: Debug> Debug for Range<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Range")
-            .field(&self.min)
-            .field(&self.max)
-            .finish()
+        f.write_fmt(format_args!("Range({:?} {:?})", self.min, self.max))
     }
 }

@@ -1,11 +1,9 @@
-
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::io::{Read};
 
-use crate::{from_reader};
 use crate::bytes_serializer::{BytesSerialize, FromReader};
-
+use crate::from_reader;
 
 #[derive(Clone, Default, PartialEq)]
 #[repr(C)]
@@ -32,19 +30,16 @@ impl DataType {
 impl BytesSerialize for DataType {}
 from_reader!(DataType);
 
-
-
-
-
-
-
-pub trait SuitableDataType: Clone + Debug + BytesSerialize + FromReader +  PartialOrd<u64> + PartialEq<u64> + 'static {
+pub trait SuitableDataType:
+    Clone + Debug + BytesSerialize + FromReader + PartialOrd<u64> + PartialEq<u64> + 'static
+{
     const REQUIRES_HEAP: bool = false;
     const TYPE_SIZE: u64 = std::mem::size_of::<Self>() as u64;
     // Get the primary key that will be used for comparisons, sorting, and duplicate checks.
-    fn first(&self) -> u64 {todo!()}
-    fn resolve_item(&mut self, _heap: &[u8], _index: u8) {
+    fn first(&self) -> u64 {
+        todo!()
     }
+    fn resolve_item(&mut self, _heap: &[u8], _index: u8) {}
 }
 
 impl SuitableDataType for DataType {

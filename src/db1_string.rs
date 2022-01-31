@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
-use std::io::{Read, Seek, Write};
+use std::io::{IoSlice, Read, Seek, Write};
 use std::os::raw::c_char;
 
 use crate::{BytesSerialize, FromReader};
@@ -11,11 +11,12 @@ use crate::chunk_header::slice_from_type;
 pub enum Db1String {
     Unresolved(u64, u64),
     Resolvedo(Vec<u8>, bool),
+    Ptr(*const u8, u64),
 }
 
 impl From<(*const c_char, u64)> for Db1String {
     fn from((ptr, len): (*const c_char, u64)) -> Self {
-        let vec = unsafe {std::slice::from_raw_parts(ptr as *const u8, len as usize)}.to_vec();
+        let vec = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) }.to_vec();
         Self::Resolvedo(vec, false)
     }
 }
@@ -39,9 +40,22 @@ impl Hash for Db1String {
 impl Debug for Db1String {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Resolvedo(v, _) if v.len() > 0 => f.write_fmt(format_args!("Document {}", std::str::from_utf8(v).unwrap_or("non-utf8"))),
-            Self::Resolvedo(v, _)  => f.write_fmt(format_args!("Empty Document")),
-            Self::Unresolved(a, b) => f.write_fmt(format_args!("Document unknown ind {} len {}", *a, *b))
+            Self::Resolvedo(v, _) if v.len() >= 100 => {
+                f.write_str("Db1string over 100")
+            }
+            Self::Resolvedo(v, _) if !v.is_empty() => f.write_fmt(format_args!(
+                "db1\"{}\"",
+                std::str::from_utf8(v).unwrap_or("non-utf8")
+            )),
+            Self::Resolvedo(_v, _) => f.write_fmt(format_args!("Empty Document")),
+            Self::Unresolved(a, b) => {
+                f.write_fmt(format_args!("Document unknown ind {} len {}", *a, *b))
+            }
+            Self::Ptr(ptr, len) => {
+                let slice = unsafe { std::slice::from_raw_parts(*ptr, *len as usize) };
+                let str = std::str::from_utf8(slice);
+                f.write_fmt(format_args!("Db1 {:?}", str))
+            }
         }
     }
 }
@@ -49,16 +63,6 @@ impl Debug for Db1String {
 impl PartialEq for Db1String {
     fn eq(&self, other: &Self) -> bool {
         self.as_buffer() == other.as_buffer()
-        // if s.is_some() && o.is_some() {
-        //     s == o
-        // } else {
-        //     match (self, other) {
-        //         (Self::Unresolved(a1, a2), Self::Unresolved(b1, b2)) => {
-        //             a1 == b1 && a2 == b2
-        //         }
-        //         _ => false
-        //     }
-        // }
     }
 }
 
@@ -73,10 +77,9 @@ impl Db1String {
     const STRING_CHECK_SEQ: u16 = 0x72a0;
     pub fn as_buffer(&self) -> &[u8] {
         match self {
-            Self::Resolvedo(s, _) => {
-                s
-            }
-            _ => panic!()
+            Self::Resolvedo(s, _) => s,
+            Self::Ptr(ptr, len) => unsafe { std::slice::from_raw_parts(*ptr, *len as usize) }
+            _ => panic!(),
         }
     }
     pub fn as_ptr(&self) -> *const c_char {
@@ -88,20 +91,44 @@ impl Db1String {
     pub fn as_ptr_allow_unresolved(&self) -> (*const u8, u64) {
         match self {
             Self::Resolvedo(a, _) => (a.as_ptr(), a.len() as u64),
-            Self::Unresolved(_, _) => (std::ptr::null(), 0)
+            Self::Unresolved(_, _) => (std::ptr::null(), 0),
+            Self::Ptr(ptr, len) => (*ptr, *len)
+        }
+    }
+    pub fn owned(&mut self) {
+        match self {
+            Self::Ptr(ptr, len) => {
+                let slice = unsafe { std::slice::from_raw_parts(*ptr, *len as usize) };
+                let vec = slice.to_vec();
+                *self = Self::Resolvedo(vec, false);
+            }
+            _ => {}
         }
     }
     pub fn resolve_item(&mut self, heap: &[u8]) {
         match self {
-            Self::Resolvedo(v, true) => {panic!("Shouldn't happen")},
-            Self::Resolvedo(v, false) => {}
+            Self::Resolvedo(_v, true) => {
+                panic!("Shouldn't happen")
+            }
+            Self::Resolvedo(_v, false) => {}
             Self::Unresolved(ind, len) => {
                 *self = Self::Resolvedo(heap[*ind as usize..(*ind + *len) as usize].to_vec(), true)
             }
+            Self::Ptr(..) => {}
         }
     }
-}
 
+    pub fn read_to_ptr(data: impl Read, heap: &[u8]) -> Self {
+        let mut s = Self::from_reader_and_heap(data, heap);
+        match s {
+            Db1String::Unresolved(loc, len) => {
+                s = Db1String::Ptr(heap[loc as usize..].as_ptr(), len);
+            }
+            _ => panic!()
+        }
+        s
+    }
+}
 
 impl From<String> for Db1String {
     fn from(s: String) -> Self {
@@ -121,16 +148,26 @@ impl From<Vec<u8>> for Db1String {
     }
 }
 
+
+fn as_bytes<T: 'static>(t: &T) -> &[u8] {
+    let ptr = t as *const T as *const u8;
+    let len = std::mem::size_of::<T>();
+    unsafe { std::slice::from_raw_parts(ptr, len) }
+}
+
 impl BytesSerialize for Db1String {
     fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut data: W, mut heap: W1) {
         let slice = self.as_buffer();
+        let slicelen = slice.len();
         let heap_position = heap.stream_position().unwrap();
-        data.write_all(&Self::STRING_CHECK_SEQ.to_le_bytes()).unwrap();
-        data.write_all(&heap_position.to_le_bytes()).unwrap();
-        data.write_all(&slice.len().to_le_bytes()).unwrap();
+        let buf1 = IoSlice::new(as_bytes(&Self::STRING_CHECK_SEQ));
+        let buf2 = IoSlice::new(as_bytes(&heap_position));
+        let buf3 = IoSlice::new(as_bytes(&slicelen));
+        data.write_all_vectored([buf1, buf2, buf3].as_mut_slice()).unwrap();
         heap.write_all(slice).unwrap();
     }
 }
+
 
 impl FromReader for Db1String {
     fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {

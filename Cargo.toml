@@ -10,6 +10,12 @@ env_logger = "*"
 zstd = "*"
 rand = "*"
 rand_chacha = "0.3.1"
+pretty-hex = "*"
+base64 = "*"
+
+[profile.release]
+debug = false
+opt-level = 3
 
 [lib]
 path="src/c_lib.rs"

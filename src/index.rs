@@ -1,28 +1,23 @@
 // Application specific
 
-
-
 use std::collections::HashSet;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::hash::{Hash, Hasher};
-use std::io::{Read, Seek, Write};
 use std::io::Cursor;
-use std::ops::{RangeBounds, RangeFull};
-use std::os::raw::c_char;
-use std::path::Path;
+use std::io::{Read, Seek, Write};
 
-use hash::{hash, InvalidWriter};
+use std::os::raw::c_char;
+
 use serializer::{DbPageManager, PageSerializer};
 
-use crate::{BytesSerialize, FromReader, SuitableDataType, TableBase, TableManager};
 use crate::db1_string::Db1String;
 use crate::gen_suitable_data_type_impls;
 use crate::hash::HashDb;
+use crate::{BytesSerialize, FromReader, SuitableDataType, TableManager};
 
 // use tests::rand_string;
-
 
 // use tests::rand_string;
 
@@ -152,10 +147,9 @@ impl SuitableDataType for ImageDocument {
     }
 }
 
-
 #[derive(Debug)]
 pub struct ImageDb<Writer: Write + Seek + Read = File> {
-    pub db: TableManager<ImageDocument, TableBase<ImageDocument>, Writer>,
+    pub db: TableManager<ImageDocument, Writer>,
     index: HashDb,
     output_buf: Vec<ImageDocument>,
     output_buf_ffi: Vec<FFIImageDocument>,
@@ -194,20 +188,39 @@ impl ImageDb<File> {
 #[no_mangle]
 pub unsafe extern "C" fn db2_new(path: *const c_char) -> *mut ImageDb {
     let path = CStr::from_ptr(path).to_str().unwrap();
-    let file = File::options().write(true).append(true).read(true).open(path);
+    let file = File::options()
+        .write(true)
+        .append(true)
+        .read(true)
+        .open(path);
     match file {
-        Ok(f) => {
-            Box::leak(Box::new(ImageDb::open_from_file(f)))
-        }
+        Ok(f) => Box::leak(Box::new(ImageDb::open_from_file(f))),
         Err(e) => {
             println!("Making {} because {:?}", path, e);
-            Box::leak(Box::new(ImageDb::new_from_file(File::options().write(true).truncate(true).read(true).create(true).open(path).unwrap())))
+            Box::leak(Box::new(ImageDb::new_from_file(
+                File::options()
+                    .write(true)
+                    .truncate(true)
+                    .read(true)
+                    .create(true)
+                    .open(path)
+                    .unwrap(),
+            )))
         }
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn db2_store(db: *mut ImageDb, id: u64, filename: *const c_char, filename_len: u64, description: *const c_char, descr_len: u64, data: *const c_char, data_len: u64) {
+pub unsafe extern "C" fn db2_store(
+    db: *mut ImageDb,
+    id: u64,
+    filename: *const c_char,
+    filename_len: u64,
+    description: *const c_char,
+    descr_len: u64,
+    data: *const c_char,
+    data_len: u64,
+) {
     let im = ImageDocument {
         id,
         filename: Db1String::from((filename, filename_len)),
@@ -253,7 +266,7 @@ pub unsafe extern "C" fn db2_drop(db: *mut ImageDb) {
 #[no_mangle]
 pub unsafe extern "C" fn db2_get_all(db: *mut ImageDb, mask: u8) -> FFIDocumentArray {
     let db = ImageDb::setup_pointer(db);
-    let res = db.db.get_in_all(RangeFull, mask);
+    let res = db.db.get_in_all(None, mask);
 
     println!("Get all res {:?}", res);
     for j in res {
@@ -266,7 +279,10 @@ pub unsafe extern "C" fn db2_get_all(db: *mut ImageDb, mask: u8) -> FFIDocumentA
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn db2_get_by_name<'a>(db: *mut ImageDb, name: *const c_char) -> FFIDocumentArray {
+pub unsafe extern "C" fn db2_get_by_name<'a>(
+    db: *mut ImageDb,
+    name: *const c_char,
+) -> FFIDocumentArray {
     let name = CStr::from_ptr(name).to_str().unwrap();
     let db = ImageDb::setup_pointer(db);
     db.get_by_name(name);
@@ -279,7 +295,6 @@ pub unsafe extern "C" fn db2_get_by_name<'a>(db: *mut ImageDb, name: *const c_ch
         len: db.output_buf_ffi.len() as u64,
     }
 }
-
 
 impl<T: Default + Write + Seek + Read> Default for ImageDb<T> {
     fn default() -> ImageDb<T> {
@@ -300,7 +315,11 @@ impl<W: Write + Seek + Read> ImageDb<W> {
     }
 
     pub fn load_index(&mut self) {
-        let index_spot = *self.db.output_stream.previous_headers.get_in_all(2, &RangeFull).last().unwrap();
+        let index_spot = self
+            .db
+            .serializer()
+            .get_in_all(2, None)
+            .unwrap();
         let page = self.serializer().get_page(index_spot);
         self.index = HashDb::from_reader_and_heap(page, &[]);
     }
@@ -315,11 +334,6 @@ impl<W: Write + Seek + Read> ImageDb<W> {
         }
     }
 
-
-    pub fn compact(&mut self) {
-        self.db.compact();
-    }
-
     pub fn get_by_name(&mut self, name: &str) -> &[ImageDocument] {
         self.output_buf.clear();
         let mut seen = HashSet::new();
@@ -331,7 +345,7 @@ impl<W: Write + Seek + Read> ImageDb<W> {
                     self.output_buf.push(exists);
                 }
             }
-        };
+        }
         &self.output_buf
     }
 
@@ -342,7 +356,7 @@ impl<W: Write + Seek + Read> ImageDb<W> {
         let ch = self.index.serialize(&mut buf);
         buf.set_position(0);
         let len = buf.stream_len().unwrap();
-        self.db.serializer().add_page(buf, len, ch);
+        self.db.serializer().add_page(buf.into_inner(), len, ch);
 
         self.db.serializer().flush();
     }
@@ -363,8 +377,9 @@ impl ImageDb {
 
 #[test]
 fn test_persistence() {
+    const PATH: &[u8] = b"/tmp/test_persistence\0";
     unsafe {
-        let mut db = db2_new(CString::new("/tmp/test_persistence").unwrap().as_ptr());
+        let db = db2_new(CStr::from_bytes_with_nul(PATH).unwrap().as_ptr());
         (&mut *db).store(ImageDocument {
             id: 1,
             filename: "fdsa".into(),
@@ -373,7 +388,7 @@ fn test_persistence() {
         });
         (&mut *db).flush_db();
         db2_drop(db);
-        let mut db = db2_new(CString::new("/tmp/test_persistence").unwrap().as_ptr());
+        let db = db2_new(CStr::from_bytes_with_nul(PATH).unwrap().as_ptr());
         dbg!(db2_get(db, 1, u8::MAX));
     }
 }
@@ -410,23 +425,22 @@ fn test_name_lookup() {
     assert_eq!(imdb.get_by_name("test.png"), [im2, im3]);
 }
 
-
 fn test_serialize(mut i: ImageDb<Cursor<Vec<u8>>>) -> ImageDb<Cursor<Vec<u8>>> {
     i.flush_db();
     let mut ser = i.serializer().replace_inner(Cursor::default());
     ser.set_position(0);
-    let i1 = ImageDb::open_from_buf(ser);
-    i1
+
+    ImageDb::open_from_buf(ser)
 }
 
 #[test]
 fn test_long() {
+    use hash::hash;
     use tests::rand_string;
-    const total_len: usize = 100;
-    env_logger::init();
+    const TOTAL_LEN: usize = 100;
     let mut imdb = ImageDb::<Cursor<Vec<u8>>>::default();
 
-    for i in 0..total_len {
+    for i in 0..TOTAL_LEN {
         let im1 = ImageDocument {
             id: i as u64,
             filename: format!("test{}", hash(&i) % 100).into(),
@@ -440,7 +454,7 @@ fn test_long() {
     let mut imdb = test_serialize(imdb);
     imdb.load_index();
 
-    let mut seen = box [0u8; total_len];
+    let mut seen = vec![0u8; TOTAL_LEN];
     for i in 0..100 {
         for img in imdb.get_by_name(&format!("test{}", i)) {
             seen[img.id as usize] += 1;
@@ -453,6 +467,7 @@ fn test_long() {
 
 #[test]
 fn test_c_api() {
+    use std::ffi::CString;
     use tests::rand_string;
     unsafe {
         let _ = std::fs::remove_file("/tmp/test_c_api_file");
@@ -468,7 +483,16 @@ fn test_c_api() {
                 data: rand_string(10).into(),
             });
             let last = imdbs.last().unwrap();
-            db2_store(db, last.id, last.filename.as_ptr(), last.filename.len(), last.description.as_ptr(), last.description.len(), last.data.as_ptr(), last.data.len());
+            db2_store(
+                db,
+                last.id,
+                last.filename.as_ptr(),
+                last.filename.len(),
+                last.description.as_ptr(),
+                last.description.len(),
+                last.data.as_ptr(),
+                last.data.len(),
+            );
         }
 
         for v in imdbs {
@@ -476,7 +500,8 @@ fn test_c_api() {
             let first = unsafe { &*res.ptr };
             assert_eq!(<&FFIImageDocument as Into<ImageDocument>>::into(first), v);
 
-            let names = db2_get_by_name(db, CString::new(v.filename.as_buffer()).unwrap().as_ptr());
+            let names =
+                db2_get_by_name(db, CString::new(v.filename.as_buffer()).unwrap().into_raw());
             assert!(names.len >= 1);
             let first = unsafe { &*names.ptr };
             assert_eq!(<&FFIImageDocument as Into<ImageDocument>>::into(first), v);
@@ -487,7 +512,15 @@ fn test_c_api() {
 #[test]
 fn test_load_description_only() {
     use tests::rand_string;
-    let mut im: ImageDb = ImageDb::new_from_file(File::options().create(true).read(true).write(true).truncate(true).open("/tmp/test_load_descr").unwrap());
+    let mut im: ImageDb = ImageDb::new_from_file(
+        File::options()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .open("/tmp/test_load_descr")
+            .unwrap(),
+    );
     for i in 0..1000 {
         im.store(ImageDocument {
             id: i,
@@ -496,7 +529,7 @@ fn test_load_description_only() {
             data: rand_string(10).into(),
         });
     }
-    let result = im.get(50, 0b1010);
+    let _result = im.get(50, 0b1010);
     let result = unsafe { db2_get(&mut im as *mut _, 50, 0b1010) };
     dbg!(result);
 }

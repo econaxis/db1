@@ -1,9 +1,6 @@
 use std::collections::HashMap;
 use std::iter::FromIterator;
 
-
-
-
 pub struct BufferPool<TableT> {
     // Maps from location -> last use time
     last_use: HashMap<u64, u64>,
@@ -25,12 +22,6 @@ impl<TableT> Default for BufferPool<TableT> {
 impl<TableT> BufferPool<TableT> {
     const MAX_BUFFERPOOL_SIZE: usize = 200;
 
-    #[cfg(test)]
-    pub fn unload_all(&mut self) {
-        self.last_use.clear();
-        self.buffer_pool.clear();
-    }
-
     pub fn load_page<Loader: FnOnce() -> TableT>(
         &mut self,
         location: u64,
@@ -38,8 +29,7 @@ impl<TableT> BufferPool<TableT> {
     ) -> &mut TableT {
         self.time += 1;
         self.evict_if_necessary();
-        self.last_use
-            .insert(location, self.time);
+        self.last_use.insert(location, self.time);
         self.buffer_pool.entry(location).or_insert_with(|| {
             log::debug!("Loading buffer pool {}", location);
             loader()

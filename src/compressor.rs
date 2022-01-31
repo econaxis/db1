@@ -1,4 +1,3 @@
-
 use crate::SuitableDataType;
 
 fn shuffle_bytes(bytes: &[u8], type_len: usize) -> Vec<u8> {
@@ -10,7 +9,7 @@ fn shuffle_bytes(bytes: &[u8], type_len: usize) -> Vec<u8> {
         for tup in 0..tuples {
             buffer.push(bytes[tup * type_len + i]);
         }
-    };
+    }
 
     buffer
 }
@@ -28,9 +27,6 @@ fn reassemble_bytes(bytes: &[u8], type_len: usize) -> Vec<u8> {
     buffer
 }
 
-
-
-
 fn shuffle_struct<T: SuitableDataType>(structs: &[u8]) -> Vec<u8> {
     let type_len = T::TYPE_SIZE as usize;
 
@@ -43,7 +39,7 @@ fn recover_structs<T: SuitableDataType>(bytes: &[u8]) -> Vec<u8> {
 
 pub fn compress<T: SuitableDataType>(structs: &[u8]) -> Vec<u8> {
     let shuffled = shuffle_struct::<T>(structs);
-    
+
     zstd::stream::encode_all(&*shuffled, 0).unwrap()
 }
 pub fn compress_heap(data: &[u8]) -> Vec<u8> {
@@ -55,14 +51,15 @@ pub fn decompress_heap(data: &[u8]) -> Vec<u8> {
 }
 pub fn decompress<T: SuitableDataType>(bytes: &[u8]) -> Vec<u8> {
     let decompressed = zstd::stream::decode_all(bytes).unwrap();
-    
+
     recover_structs::<T>(&decompressed)
 }
 
 #[test]
 fn test_reassembly_works() {
-    
-    let rand_str: String = " fdsafd;salkf dsa08hf d [sahdsa;ofjs afdhsa [ufdsafd;sa fkdsa ;flsaj ;dlka jfdsa".to_string();
+    let rand_str: String =
+        " fdsafd;salkf dsa08hf d [sahdsa;ofjs afdhsa [ufdsafd;sa fkdsa ;flsaj ;dlka jfdsa"
+            .to_string();
 
     let shuffled = shuffle_bytes(rand_str.as_bytes(), 8);
 

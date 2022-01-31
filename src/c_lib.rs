@@ -1,50 +1,54 @@
-#![feature(cursor_remaining)]
-#![feature(write_all_vectored)]
 #![feature(is_sorted)]
-#![feature(map_first_last)]
 #![feature(assert_matches)]
-#![feature(box_syntax)]
 #![allow(clippy::manual_strip)]
 #![allow(clippy::assertions_on_constants)]
 #![allow(unused_unsafe)]
+#![feature(trait_alias)]
 #![feature(seek_stream_len)]
-#![feature(type_name_of_val)]
-
+#![feature(termination_trait_lib)]
+#![feature(test)]
+#![feature(process_exitcode_placeholder)]
+#![feature(write_all_vectored)]
 extern crate rand;
+extern crate test;
 
 use std::cmp::Ordering;
 use std::ffi::{CStr, CString};
 use std::fmt::{Debug, Formatter};
 use std::fs::File;
 use std::hash::{Hash, Hasher};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, Write};
 use std::os::raw::c_char;
 
 pub use range::Range;
 
-pub use crate::{bytes_serializer::BytesSerialize, bytes_serializer::FromReader,
-                chunk_header::ChunkHeader,
-                suitable_data_type::DataType,
-                suitable_data_type::SuitableDataType, table_base::TableBase, table_manager::TableManager};
 use crate::chunk_header::slice_from_type;
 use crate::db1_string::Db1String;
+pub use crate::{
+    bytes_serializer::BytesSerialize, bytes_serializer::FromReader, chunk_header::ChunkHeader,
+    suitable_data_type::DataType, suitable_data_type::SuitableDataType, table_base::TableBase,
+    table_manager::TableManager,
+};
 
 mod buffer_pool;
 mod bytes_serializer;
 mod chunk_header;
+mod compressor;
+mod db1_string;
+mod dynamic_tuple;
+mod hash;
 mod heap_writer;
+mod index;
+mod mypdf;
 mod range;
+mod serializer;
 mod suitable_data_type;
 mod table_base;
+mod table_base2;
 mod table_manager;
-mod tests;
-mod db1_string;
-mod compressor;
-mod hash;
 mod table_traits;
-mod index;
-mod serializer;
-
+mod tests;
+mod query_data;
 
 #[repr(C)]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,7 +57,6 @@ pub struct Document {
     pub name: Db1String,
     pub document: Db1String,
 }
-
 
 impl Document {
     pub fn hash(&self) -> u64 {
@@ -66,7 +69,6 @@ impl Hash for Document {
         self.id.hash(state)
     }
 }
-
 
 impl PartialEq<u64> for Document {
     fn eq(&self, other: &u64) -> bool {
@@ -95,6 +97,7 @@ impl Ord for Document {
 impl SuitableDataType for Document {
     const REQUIRES_HEAP: bool = true;
     const TYPE_SIZE: u64 = (8 + 8 + 2) * 2 + 4;
+
     fn first(&self) -> u64 {
         self.id as u64
     }
@@ -128,15 +131,21 @@ impl FromReader for Document {
 
 #[no_mangle]
 pub unsafe extern "C" fn db1_store(
-    db: *mut TableManager<Document, TableBase<Document>, File>,
+    db: *mut TableManager<Document, File>,
     id: u32,
     name: *const c_char,
     name_len: u32,
     document: *const c_char,
     document_len: u32,
 ) {
-    let name: Db1String = unsafe { std::slice::from_raw_parts(name as *const u8, name_len as usize) }.to_vec().into();
-    let document: Db1String = unsafe { std::slice::from_raw_parts(document as *const u8, document_len as usize) }.to_vec().into();
+    let name: Db1String =
+        unsafe { std::slice::from_raw_parts(name as *const u8, name_len as usize) }
+            .to_vec()
+            .into();
+    let document: Db1String =
+        unsafe { std::slice::from_raw_parts(document as *const u8, document_len as usize) }
+            .to_vec()
+            .into();
 
     (&mut *db).store_and_replace(Document { id, name, document });
 }
@@ -168,30 +177,36 @@ impl StrFatPtr {
 
 #[no_mangle]
 pub unsafe extern "C" fn db1_get(
-    db: *mut TableManager<Document, TableBase<Document>, File>,
+    db: *mut TableManager<Document, File>,
     id: u32,
     field: u8,
 ) -> StrFatPtr {
     let id = id as u64;
-    let result = (&mut *db).get_in_all(id..=id, u8::MAX);
+    let result = (&mut *db).get_in_all(Some(id), u8::MAX);
 
     if let Some(result) = result.first() {
         let document = match field {
             0 => &result.name,
             1 => &result.document,
-            _ => panic!()
+            _ => panic!(),
         };
         let str = document.as_buffer();
-        StrFatPtr { ptr: str.as_ptr() as *const c_char, len: str.len() as u64 }
+        StrFatPtr {
+            ptr: str.as_ptr() as *const c_char,
+            len: str.len() as u64,
+        }
     } else {
-        StrFatPtr { ptr: std::ptr::null(), len: 0 }
+        StrFatPtr {
+            ptr: std::ptr::null(),
+            len: 0,
+        }
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn db1_compact(ptr: *mut TableManager<Document, TableBase<Document>, File>) {
-    unsafe { &mut *ptr }.compact();
-}
+// #[no_mangle]
+// pub unsafe extern "C" fn db1_compact(ptr: *mut TableManager<Document,  File>) {
+//     unsafe { &mut *ptr }.compact();
+// }
 
 #[no_mangle]
 pub unsafe extern "C" fn free_char_p(f: *mut c_char) {
@@ -199,7 +214,7 @@ pub unsafe extern "C" fn free_char_p(f: *mut c_char) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn db1_new(filename: *const c_char) -> *mut TableManager<Document, TableBase<Document>, File> {
+pub unsafe extern "C" fn db1_new(filename: *const c_char) -> *mut TableManager<Document, File> {
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .read(true)
@@ -208,7 +223,7 @@ pub unsafe extern "C" fn db1_new(filename: *const c_char) -> *mut TableManager<D
         .open(CStr::from_ptr(filename).to_str().unwrap())
         .unwrap();
     let db = if file.stream_len().unwrap() > 0 {
-        TableManager::<Document, TableBase<Document>, File>::read_from_file(file)
+        TableManager::<Document, File>::read_from_file(file)
     } else {
         TableManager::new(file)
     };
@@ -216,26 +231,32 @@ pub unsafe extern "C" fn db1_new(filename: *const c_char) -> *mut TableManager<D
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn db1_delete(ptr: *mut TableManager<Document, TableBase<Document>, File>) {
+pub unsafe extern "C" fn db1_delete(ptr: *mut TableManager<Document, File>) {
     Box::from_raw(ptr);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn db1_persist(db: *mut TableManager<Document, TableBase<Document>, File>) {
+pub unsafe extern "C" fn db1_persist(db: *mut TableManager<Document, File>) {
     (&mut *db).force_flush();
 }
-
 
 #[test]
 fn clibtest_document() {
     const PATH: &[u8] = b"/tmp/test1\0";
-    std::fs::remove_file("/tmp/test1");
+    let _ = std::fs::remove_file("/tmp/test1");
     unsafe {
         let dbm = db1_new(CStr::from_bytes_with_nul(PATH).unwrap().as_ptr());
         dbg!(&mut *dbm);
         let name = CString::new("fdsafsvcx").unwrap();
         let document = CString::new(" fdsafsaduf sa hdsapuofhs f").unwrap();
-        db1_store(dbm, 3, name.as_ptr(), name.as_bytes().len() as u32, document.as_ptr(), document.as_bytes().len() as u32);
+        db1_store(
+            dbm,
+            3,
+            name.as_ptr(),
+            name.as_bytes().len() as u32,
+            document.as_ptr(),
+            document.as_bytes().len() as u32,
+        );
 
         let res = db1_get(dbm, 3, 1);
         println!("{:?}", res.ptr);
@@ -245,10 +266,8 @@ fn clibtest_document() {
         db1_persist(dbm);
         db1_delete(dbm);
 
-
         let dbm = db1_new(CStr::from_bytes_with_nul(PATH).unwrap().as_ptr());
         dbg!(db1_get(dbm, 3, 1));
         db1_delete(dbm);
     }
 }
-

@@ -1,11 +1,13 @@
-use std::collections::{HashMap};
 use std::collections::hash_map::{DefaultHasher, Entry};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Seek, SeekFrom, Write};
+use Range;
 
-
-
-use crate::{BytesSerialize, ChunkHeader, from_reader, FromReader, gen_suitable_data_type_impls, SuitableDataType};
+use crate::{
+    from_reader, gen_suitable_data_type_impls, BytesSerialize, ChunkHeader, FromReader,
+    SuitableDataType,
+};
 
 #[derive(Clone, Debug, PartialEq, Hash)]
 pub struct IndexKey {
@@ -50,7 +52,7 @@ impl FromReader for HashDb {
         let chunk_header = ChunkHeader::from_reader_and_heap(&mut r, heap);
         log::debug!("Hash db chunk header {:?}", chunk_header);
         let mut ret = HashDb::default();
-        for _ in 0..chunk_header.length {
+        for _ in 0..chunk_header.tuple_count {
             let t = IndexKey::from_reader_and_heap(&mut r, heap);
             ret.store_by_hash(t);
         }
@@ -58,15 +60,18 @@ impl FromReader for HashDb {
     }
 }
 
-
 impl HashDb {
     fn get_chunk_header(&self) -> ChunkHeader {
         ChunkHeader {
             ty: 2,
-            type_size: std::mem::size_of::<IndexKey>() as u32,
-            length: self.hash.len() as u32,
+            type_size: 0,
+            tuple_count: self.hash.len() as u32,
+            tot_len: (self.hash.len() * std::mem::size_of::<IndexKey>()) as u32,
             heap_size: 0,
-            limits: Default::default(),
+            limits: Range {
+                min: Some(0),
+                max: Some(0)
+            },
             compressed_size: 0,
         }
     }
@@ -93,13 +98,6 @@ impl Write for InvalidWriter {
 impl Seek for InvalidWriter {
     fn seek(&mut self, _pos: SeekFrom) -> std::io::Result<u64> {
         panic!()
-    }
-}
-
-impl HashDb {
-    #[cfg(test)]
-    fn assert_eq(&self, other: &Self) -> bool {
-        self.hash == other.hash
     }
 }
 
@@ -148,12 +146,12 @@ impl HashDb {
     }
 }
 
-
 #[cfg(test)]
 mod test {
     use std::io::Cursor;
-    use ::{BytesSerialize, FromReader};
-    use hash::{HashDb, InvalidWriter};
+
+    use hash::HashDb;
+    use FromReader;
 
     #[test]
     fn test_hash_collision() {
@@ -179,7 +177,7 @@ mod test {
         db.serialize(&mut f);
 
         f.set_position(0);
-        let mut db1 = HashDb::from_reader_and_heap(f, &[]);
+        let db1 = HashDb::from_reader_and_heap(f, &[]);
         assert_eq!(db, db1);
     }
 }

@@ -8,7 +8,6 @@ pub fn default_heap_writer() -> Cursor<Vec<u8>> {
     s
 }
 pub fn default_mem_writer() -> Cursor<Vec<u8>> {
-    
     Cursor::new(Vec::new())
 }
 
