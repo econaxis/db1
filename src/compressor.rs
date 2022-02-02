@@ -1,6 +1,7 @@
 use crate::SuitableDataType;
 
 fn shuffle_bytes(bytes: &[u8], type_len: usize) -> Vec<u8> {
+    panic!("Compression not supported");
     assert_eq!(bytes.len() % type_len, 0);
     let tuples = bytes.len() / type_len;
     let mut buffer = Vec::with_capacity(bytes.len());
@@ -15,6 +16,7 @@ fn shuffle_bytes(bytes: &[u8], type_len: usize) -> Vec<u8> {
 }
 
 fn reassemble_bytes(bytes: &[u8], type_len: usize) -> Vec<u8> {
+    panic!("Compression not supported");
     assert_eq!(bytes.len() % type_len, 0);
     let chunk_size = bytes.len() / type_len;
 
@@ -28,31 +30,37 @@ fn reassemble_bytes(bytes: &[u8], type_len: usize) -> Vec<u8> {
 }
 
 fn shuffle_struct<T: SuitableDataType>(structs: &[u8]) -> Vec<u8> {
+    panic!("Compression not supported");
     let type_len = T::TYPE_SIZE as usize;
 
     shuffle_bytes(structs, type_len)
 }
 
 fn recover_structs<T: SuitableDataType>(bytes: &[u8]) -> Vec<u8> {
+    panic!("Compression not supported");
     reassemble_bytes(bytes, T::TYPE_SIZE as usize)
 }
 
 pub fn compress<T: SuitableDataType>(structs: &[u8]) -> Vec<u8> {
-    let shuffled = shuffle_struct::<T>(structs);
-
-    zstd::stream::encode_all(&*shuffled, 0).unwrap()
+    panic!("Compression not supported")
+    // let shuffled = shuffle_struct::<T>(structs);
+    //
+    // zstd::stream::encode_all(&*shuffled, 0).unwrap()
 }
 pub fn compress_heap(data: &[u8]) -> Vec<u8> {
-    zstd::stream::encode_all(data, 0).unwrap()
+    panic!("Compression not supported")
+    // zstd::stream::encode_all(data, 0).unwrap()
 }
 
 pub fn decompress_heap(data: &[u8]) -> Vec<u8> {
-    zstd::stream::decode_all(data).unwrap()
+    panic!("Compression not supported");
+    // zstd::stream::decode_all(data).unwrap()
 }
 pub fn decompress<T: SuitableDataType>(bytes: &[u8]) -> Vec<u8> {
-    let decompressed = zstd::stream::decode_all(bytes).unwrap();
-
-    recover_structs::<T>(&decompressed)
+    panic!("Compression not supported");
+    // let decompressed = zstd::stream::decode_all(bytes).unwrap();
+    //
+    // recover_structs::<T>(&decompressed)
 }
 
 #[test]

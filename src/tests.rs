@@ -10,7 +10,7 @@ use rand::prelude::SliceRandom;
 use rand::SeedableRng;
 use rand::{Rng};
 
-use serializer::{DbPageManager, PageSerializer};
+use serializer::{ PageSerializer};
 
 
 use crate::index::ImageDocument;
@@ -180,7 +180,7 @@ pub fn mess_up<W: Read + Write + Seek>(a: &mut PageSerializer<W>) {
             },
             compressed_size: 0,
             type_size: 0,
-        },
+        }
     );
 }
 

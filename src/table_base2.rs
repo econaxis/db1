@@ -3,14 +3,16 @@ use std::collections::BinaryHeap;
 use std::convert::TryInto;
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::option::Option::None;
 
 use {ChunkHeader, Range};
 use {FromReader, SuitableDataType};
 use BytesSerialize;
+use db1_string::Db1String;
 use dynamic_tuple::{DynamicTuple, DynamicTupleInstance, TupleBuilder};
 use dynamic_tuple::RWS;
 use hash::InvalidWriter;
-use serializer::{DbPageManager, PageSerializer};
+use serializer::{PageSerializer};
 use table_base::read_to_buf;
 
 pub struct TableBase2 {
@@ -23,7 +25,6 @@ pub struct TableBase2 {
     pub loaded_location: Option<u64>,
 }
 
-#[derive(Default)]
 pub struct Heap(Cursor<Vec<u8>>, BinaryHeap<(u32, u32)>);
 
 impl Heap {
@@ -33,6 +34,11 @@ impl Heap {
     }
 }
 
+impl Default for Heap {
+    fn default() -> Self {
+        Self(Cursor::new(Vec::with_capacity(16000)), Default::default())
+    }
+}
 impl Write for &mut Heap {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.0.write(buf)
@@ -80,7 +86,6 @@ impl Debug for TableBase2 {
 }
 
 
-
 /*
 Named table supports functions:
 
@@ -102,7 +107,7 @@ impl TableBase2 {
     pub fn new(ty: u64, type_size: usize) -> Self {
         Self {
             ty,
-            data: Default::default(),
+            data: Vec::with_capacity(16000),
             limits: Default::default(),
             type_size,
             heap: Default::default(),
@@ -140,6 +145,9 @@ impl TableBase2 {
     pub fn len(&self) -> u64 {
         (self.data.len() / self.type_size) as u64
     }
+    pub fn serialized_len(&self) -> usize {
+        self.data.len() + self.heap.len() as usize + ChunkHeader::MAXTYPESIZE as usize + std::mem::size_of_val(&Self::TABLEBASE2)
+    }
     pub fn heap_size(&self) -> u64 {
         self.heap.len()
     }
@@ -175,7 +183,6 @@ impl TableBase2 {
     pub fn insert(&mut self, t: DynamicTupleInstance) {
         assert_eq!(t.len, self.type_size);
         self.dirty = true;
-        // todo: refactor
         let position = self
             .binary_search(t.first())
             .unwrap_or((self.data.len() / self.type_size) as u64) as usize * self.type_size;
@@ -259,6 +266,7 @@ impl TableBase2 {
         })
     }
 
+
     pub fn force_flush<W: Write + Read + Seek>(&mut self, ps: &mut PageSerializer<W>) -> u64 {
         if std::thread::panicking() {
             return 0;
@@ -313,6 +321,9 @@ impl FromReader for TableBase2 {
 
         let mut data = vec![0u8; data_size as usize];
         let mut heap = vec![0u8; heap_size as usize];
+
+        data.reserve(data.len().saturating_sub(16000));
+        heap.reserve(heap.len().saturating_sub(16000));
         r.read_exact(&mut data).unwrap();
         r.read_exact(&mut heap).unwrap();
 
@@ -332,9 +343,10 @@ impl FromReader for TableBase2 {
 
 #[test]
 fn works() {
-    
     use ::dynamic_tuple::Type;
-    let mut db = TableBase2::new(19, 18 * 2 + 8);
+    let mut db = TableBase2::new(19, (Db1String::TYPE_SIZE * 2 + 8) as usize);
+    let mut ps = PageSerializer::create(Cursor::new(Vec::new()), None);
+
 
     let v: Vec<u64> = (0..1000).map(|a| (a * (a + 1000)) % 30).collect();
     for i in &v {
@@ -346,7 +358,6 @@ fn works() {
         db.insert(inst);
     }
 
-    let mut ps = PageSerializer::default();
     db.force_flush(&mut ps);
 
     let page = ps.get_in_all(19, None).unwrap();
@@ -366,7 +377,7 @@ fn works() {
     assert_eq!(tup.extract_string(2), b"world");
 
     let mut split_db = db.split(&dyntuple).unwrap();
-    println!("Split result {:?} {:?}", db, split_db );
+    println!("Split result {:?} {:?}", db, split_db);
 
 
     dbg!(dyntuple.read_tuple(
@@ -386,7 +397,7 @@ fn works() {
     let mut f = std::mem::take(&mut ps.file);
     f.set_position(0);
 
-    let ps1 = PageSerializer::create_from_reader(f);
+    let ps1 = PageSerializer::create_from_reader(f, None);
     assert!(ps1.get_in_all(19, None).is_some());
 }
 
@@ -396,7 +407,7 @@ fn bp_works() {
     let mut ps = PageSerializer::default();
 
     for _ in 0..100 {
-        let mut table = TableBase2::new(1, 18 * 2 + 8);
+        let mut table = TableBase2::new(1, Db1String::TYPE_SIZE as usize * 2 + 8);
         for i in 0..40 {
             let ty = TupleBuilder::default()
                 .add_int(i)
@@ -409,6 +420,6 @@ fn bp_works() {
     }
 
     let file = std::mem::take(&mut ps.file);
-    let ps = PageSerializer::create_from_reader(file);
+    let ps = PageSerializer::create_from_reader(file, None);
     dbg!(&ps.clone_headers());
 }

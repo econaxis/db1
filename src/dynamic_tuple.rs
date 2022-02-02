@@ -1,3 +1,5 @@
+extern crate rand_chacha;
+
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -5,16 +7,15 @@ use std::ffi::{CStr, CString};
 use std::fmt::{Debug, Write as OW};
 use std::fs::File;
 use std::io::{Cursor, Read, Seek, Write};
+use std::option::Option::None;
 use std::os::raw::c_char;
 use std::sync::Once;
-
-
 
 use {BytesSerialize, SuitableDataType};
 use db1_string::Db1String;
 use FromReader;
 use gen_suitable_data_type_impls;
-use serializer::{DbPageManager, PageSerializer};
+use serializer::{ PageSerializer};
 use table_base2::{Heap, TableBase2};
 use table_base::read_to_buf;
 
@@ -305,7 +306,7 @@ impl TypedTable {
             }
         };
 
-        if page.len() >= 100 {
+        if page.serialized_len() >= 16000 {
             let old_min_limits = page.limits.min.unwrap();
             let newpage = page.split(&self.ty);
             if let Some(mut x) = newpage {
@@ -734,7 +735,7 @@ fn onehundred_typed_tables() {
     }
 
     ps.unload_all();
-    let mut ps1 = PageSerializer::create_from_reader(ps.file.clone());
+    let mut ps1 = PageSerializer::create_from_reader(ps.file.clone(), None);
     for i in (0..2000).rev() {
         assert_eq!(
             tables[i % 100].get_in_all(i as u64, 0, &mut ps).results(),
@@ -897,7 +898,7 @@ impl NamedTables {
 
 #[test]
 fn test_sql_all() {
-    let mut ps = PageSerializer::default();
+    let mut ps = PageSerializer::create(Cursor::new(Vec::new()), Some(16000));
     let mut nt = NamedTables::new(&mut ps);
 
     parse_lex_sql("CREATE TABLE tbl (id INT, name STRING, telephone STRING)", &mut nt, &mut ps);
@@ -912,7 +913,7 @@ fn test_sql_all() {
     let answer2 = parse_lex_sql(r#"SELECT id, fax FROM tbl1 WHERE fax EQUALS 3209324830294 "#, &mut nt, &mut ps).unwrap().results();
     dbg!(&answer1, &answer2);
 
-    let mut ps = PageSerializer::create_from_reader(ps.move_file());
+    let mut ps = PageSerializer::create_from_reader(ps.move_file(), Some(16000));
     let mut nt = NamedTables::new(&mut ps);
     assert_eq!(parse_lex_sql(r#"SELECT id, name, telephone FROM tbl WHERE id EQUALS 4 "#, &mut nt, &mut ps).unwrap().results(), answer1);
     assert_eq!(parse_lex_sql(r#"SELECT id, fax FROM tbl1 WHERE fax EQUALS 3209324830294 "#, &mut nt, &mut ps).unwrap().results(), answer2);
@@ -925,15 +926,15 @@ fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
     use rand::thread_rng;
     ENVLOGGER.call_once(env_logger::init);
     let file = File::options().truncate(true).create(true).read(true).write(true).open("/tmp/test_selects").unwrap();
-    let mut ps = PageSerializer::create(file);
+    let mut ps = PageSerializer::create(file, None);
     let mut nt = NamedTables::new(&mut ps);
 
     parse_lex_sql("CREATE TABLE tbl (id INT, name STRING, telephone STRING)", &mut nt, &mut ps);
 
-    let mut indices: Vec<u64> = (0..5_000_000).collect();
+    let mut indices: Vec<u64> = (0..1_000_000).collect();
     indices.shuffle(&mut thread_rng());
     let mut j = indices.iter().cycle();
-    for _ in 0..5_000_000 {
+    for _ in 0..1_000_000 {
         let j = *j.next().unwrap();
         let i = j + 10;
         parse_lex_sql(&format!(r#"INSERT INTO tbl VALUES ({i}, "hello{i} world", "{i}"), ({j}, "hello{j} world", "{j}")"#), &mut nt, &mut ps);
@@ -945,11 +946,8 @@ fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
             r.results();
         }
     });
-
-    
 }
 
-extern crate rand_chacha;
 #[test]
 fn test_lots_inserts() {
     use rand::seq::SliceRandom;
@@ -957,15 +955,15 @@ fn test_lots_inserts() {
     ENVLOGGER.call_once(env_logger::init);
     let mut a = rand_chacha::ChaCha20Rng::seed_from_u64(1);
     let file = File::options().truncate(true).create(true).read(true).write(true).open("/tmp/test-lots-inserts").unwrap();
-    let mut ps = PageSerializer::create(file);
+    let mut ps = PageSerializer::create(file, Some(16000));
     let mut nt = NamedTables::new(&mut ps);
 
     parse_lex_sql("CREATE TABLE tbl (id INT, name STRING, telephone STRING)", &mut nt, &mut ps);
 
-    let mut indices: Vec<u64> = (0..1_000_000).collect();
+    let mut indices: Vec<u64> = (0..100_000).collect();
     indices.shuffle(&mut a);
     let mut j = indices.iter().cycle();
-    for _ in 0..1_000 {
+    for _ in 0..1_0000 {
         let j = j.next().unwrap();
         let i = j + 10;
         parse_lex_sql(&format!(r#"INSERT INTO tbl VALUES ({i}, "hello{i} world", "{i}"), ({j}, "hello{j} world", "{j}")"#), &mut nt, &mut ps);
@@ -979,18 +977,19 @@ fn lots_inserts(b: &mut test::Bencher) -> impl std::process::Termination {
     ENVLOGGER.call_once(env_logger::init);
     let mut a = rand_chacha::ChaCha20Rng::seed_from_u64(1);
     let file = File::options().truncate(true).create(true).read(true).write(true).open("/tmp/test-lots-inserts").unwrap();
-    let mut ps = PageSerializer::create(file);
+    let mut ps = PageSerializer::create(file, None);
     let mut nt = NamedTables::new(&mut ps);
 
-    parse_lex_sql("CREATE TABLE tbl (id INT, name STRING, telephone STRING)", &mut nt, &mut ps);
+    parse_lex_sql("CREATE TABLE tbl (id INT, name STRING, telephone STRING, description STRING)", &mut nt, &mut ps);
 
-    let mut indices: Vec<u64> = (0..1_000_000).collect();
+    let mut indices: Vec<u64> = (0..2_000_000).collect();
     indices.shuffle(&mut a);
     let mut j = indices.iter().cycle();
+    let desc_string = String::from_utf8(vec![b'a'; 10]).unwrap();
     b.iter(|| {
         let j = j.next().unwrap();
         let i = j + 10;
-        parse_lex_sql(&format!(r#"INSERT INTO tbl VALUES ({i}, "hello{i} world", "{i}"), ({j}, "hello{j} world", "{j}")"#), &mut nt, &mut ps);
+        parse_lex_sql(&format!(r#"INSERT INTO tbl VALUES ({i}, "hello{i} world", "{i}" ,"{desc_string}"), ({j}, "hello{j} world", "{j}", "{desc_string}")"#), &mut nt, &mut ps);
     });
 
     // for _ in 0..1_000_000 {
@@ -1062,7 +1061,7 @@ fn named_table_exec_insert() {
 
     ps.unload_all();
     let prev_headers = ps.clone_headers();
-    let mut ps1 = PageSerializer::create_from_reader(ps.move_file());
+    let mut ps1 = PageSerializer::create_from_reader(ps.move_file(), None);
     assert_eq!(ps1.clone_headers(), prev_headers);
     let mut nt = NamedTables::new(&mut ps1);
     dbg!(nt.execute_select(

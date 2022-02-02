@@ -10,7 +10,7 @@ use std::io::{Read, Seek, Write};
 
 use std::os::raw::c_char;
 
-use serializer::{DbPageManager, PageSerializer};
+use serializer::{PageSerializer};
 
 use crate::db1_string::Db1String;
 use crate::gen_suitable_data_type_impls;
@@ -448,6 +448,7 @@ fn test_long() {
             data: rand_string(100).into(),
         };
         imdb.store(im1);
+        imdb.flush_db();
     }
 
     println!("done");

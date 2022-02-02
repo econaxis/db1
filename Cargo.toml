@@ -6,16 +6,20 @@ version = "0.1.0"
 
 [dependencies]
 log = "*"
-env_logger = "*"
-zstd = "*"
-rand = "*"
+env_logger = {version = "*", default-features = false}
+
+[dev-dependencies]
+rand = {version = "*", default-features = false, features = ["std", "std_rng"]}
 rand_chacha = "0.3.1"
-pretty-hex = "*"
-base64 = "*"
 
 [profile.release]
 debug = false
 opt-level = 3
+
+[profile.bench]
+opt-level = 3
+lto = true
+debug = 1
 
 [lib]
 path="src/c_lib.rs"

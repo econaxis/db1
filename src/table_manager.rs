@@ -5,8 +5,9 @@ use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, Write};
 use std::marker::PhantomData;
 use std::ops::{RangeBounds};
+use std::option::Option::None;
 
-use serializer::{DbPageManager, PageSerializer};
+use serializer::{ PageSerializer};
 use table_base::TableBaseRangeIterator;
 use FromReader;
 
@@ -38,7 +39,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     // Constructs a DbManager instance from a DbBase and an output writer (like a file)
     pub fn new(writer: Writer) -> Self {
         Self {
-            output_stream: PageSerializer::create(writer),
+            output_stream: PageSerializer::create(writer, None),
             db: Default::default(),
             buffer_pool: Default::default(),
             result_buffer: Default::default(),
@@ -103,7 +104,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
             db: TableBase::default(),
             buffer_pool: BufferPool::default(),
             result_buffer: Default::default(),
-            output_stream: PageSerializer::create_from_reader(r),
+            output_stream: PageSerializer::create_from_reader(r, None),
         }
     }
 
@@ -310,7 +311,7 @@ impl<T: SuitableDataType> Default for TableManager<T> {
         let db = TableBase::default();
         Self {
             db,
-            output_stream: PageSerializer::create(Cursor::new(Vec::new())),
+            output_stream: PageSerializer::create(Cursor::new(Vec::new()), None),
             buffer_pool: Default::default(),
             result_buffer: Default::default(),
         }

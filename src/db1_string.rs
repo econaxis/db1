@@ -73,8 +73,8 @@ impl Default for Db1String {
 }
 
 impl Db1String {
-    pub const TYPE_SIZE: u64 = 18;
-    const STRING_CHECK_SEQ: u16 = 0x72a0;
+    pub const TYPE_SIZE: u64 = 1 + 4 + 4;
+    const STRING_CHECK_SEQ: u8 = 0xa7;
     pub fn as_buffer(&self) -> &[u8] {
         match self {
             Self::Resolvedo(s, _) => s,
@@ -158,8 +158,8 @@ fn as_bytes<T: 'static>(t: &T) -> &[u8] {
 impl BytesSerialize for Db1String {
     fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut data: W, mut heap: W1) {
         let slice = self.as_buffer();
-        let slicelen = slice.len();
-        let heap_position = heap.stream_position().unwrap();
+        let slicelen = slice.len() as u32;
+        let heap_position = heap.stream_position().unwrap() as u32;
         let buf1 = IoSlice::new(as_bytes(&Self::STRING_CHECK_SEQ));
         let buf2 = IoSlice::new(as_bytes(&heap_position));
         let buf3 = IoSlice::new(as_bytes(&slicelen));
@@ -171,9 +171,9 @@ impl BytesSerialize for Db1String {
 
 impl FromReader for Db1String {
     fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
-        let mut check_sequence: u16 = 0;
-        let mut loc: u64 = 0;
-        let mut len: u64 = 0;
+        let mut check_sequence: u8 = 0;
+        let mut loc: u32 = 0;
+        let mut len: u32 = 0;
         r.read_exact(slice_from_type(&mut check_sequence)).unwrap();
         r.read_exact(slice_from_type(&mut loc)).unwrap();
         r.read_exact(slice_from_type(&mut len)).unwrap();
@@ -183,6 +183,6 @@ impl FromReader for Db1String {
         if (loc == 0 && len == 0) || heap.is_empty() {
             return Self::default();
         }
-        Self::Unresolved(loc, len)
+        Self::Unresolved(loc as u64, len as u64)
     }
 }

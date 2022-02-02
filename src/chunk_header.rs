@@ -1,24 +1,40 @@
 use std::collections::BTreeMap;
-use std::fmt::{Debug};
+use std::fmt::Debug;
 use std::io::{Read, Seek, Write};
-
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
 use crate::range::Range;
 
-const CH_CHECK_SEQUENCE: u32 = 0x32aa8429;
+const CH_CHECK_SEQUENCE: u64 = 0x32aa842f80ad9;
 
 impl BytesSerialize for ChunkHeader {
     fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut w: W, mut _heap: W1) {
-        w.write_all(&CH_CHECK_SEQUENCE.to_le_bytes()).unwrap();
-        w.write_all(&self.ty.to_le_bytes()).unwrap();
-        w.write_all(&self.tot_len.to_le_bytes()).unwrap();
-        w.write_all(&self.type_size.to_le_bytes()).unwrap();
-        w.write_all(&self.tuple_count.to_le_bytes()).unwrap();
-        w.write_all(&self.heap_size.to_le_bytes()).unwrap();
-        w.write_all(&self.compressed_size.to_le_bytes()).unwrap();
+        // w.write_all(&CH_CHECK_SEQUENCE.to_le_bytes()).unwrap();
+        let mut rc = ReadContainer {
+            check_sequence: CH_CHECK_SEQUENCE,
+            ty: self.ty,
+            tot_len: self.tot_len,
+            type_size: self.type_size,
+            tuple_count: self.tuple_count,
+            heap_size: self.heap_size,
+            compressed_size: self.compressed_size,
+        };
+        w.write_all(slice_from_type(&mut rc)).unwrap();
+
         self.limits.serialize_with_heap(w, _heap);
     }
+}
+
+#[derive(Default, Debug)]
+#[repr(C)]
+struct ReadContainer {
+    check_sequence: u64,
+    ty: u64,
+    tot_len: u32,
+    type_size: u32,
+    tuple_count: u32,
+    heap_size: u32,
+    compressed_size: u32,
 }
 
 pub fn slice_from_type<T: Sized>(t: &mut T) -> &mut [u8] {
@@ -29,34 +45,23 @@ impl FromReader for Option<ChunkHeader> {
     fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
         assert_eq!(heap.len(), 0);
 
-        let mut check_sequence: u32 = 0;
-        let mut ty: u64 = 0;
-        let mut type_size: u32 = 0;
-        let mut tot_len: u32 = 0;
-        let mut tuple_count: u32 = 0;
-        let mut heap_size: u32 = 0;
-        let mut compressed_size: u32 = 0;
-        r.read_exact(slice_from_type(&mut check_sequence)).ok()?;
-        if check_sequence != CH_CHECK_SEQUENCE {
-            println!("Check sequence doesn't match");
+
+        let mut rc = ReadContainer::default();
+        r.read_exact(slice_from_type(&mut rc)).ok()?;
+        if rc.check_sequence != CH_CHECK_SEQUENCE {
+            println!("Check sequence doesn't match {:?}", rc);
             return None;
         }
-        r.read_exact(slice_from_type(&mut ty)).unwrap();
-        r.read_exact(slice_from_type(&mut tot_len)).unwrap();
-        r.read_exact(slice_from_type(&mut type_size)).unwrap();
-        r.read_exact(slice_from_type(&mut tuple_count)).unwrap();
-        r.read_exact(slice_from_type(&mut heap_size)).unwrap();
-        r.read_exact(slice_from_type(&mut compressed_size)).unwrap();
         let limits = Range::from_reader_and_heap(r, heap);
 
         Some(ChunkHeader {
-            ty,
-            tot_len,
-            type_size,
+            ty: rc.ty,
+            tot_len: rc.tot_len,
+            type_size: rc.type_size,
             limits,
-            tuple_count,
-            heap_size,
-            compressed_size,
+            tuple_count: rc.tuple_count,
+            heap_size: rc.heap_size,
+            compressed_size: rc.compressed_size,
         })
     }
 }
@@ -76,6 +81,7 @@ pub struct ChunkHeader {
 }
 
 impl ChunkHeader {
+    pub const MAXTYPESIZE: u64 = 60;
     pub(crate) fn compressed(&self) -> bool {
         self.compressed_size > 0
     }
@@ -149,7 +155,6 @@ impl Default for ChunkHeaderIndex {
 
 impl ChunkHeaderIndex {
     pub fn remove(&mut self, ty: u64, pkey: u64) -> u64 {
-
         let mk = MinKey::new(ty, pkey);
         let k = self.0.range(mk.start_ty()..=mk).rev().next().unwrap();
         let location = k.1.location;
@@ -160,13 +165,16 @@ impl ChunkHeaderIndex {
     }
 
     pub fn get_in_one(&self, ty: u64, pkey: u64) -> Option<(&'_ MinKey, &'_ CHValue)> {
-        
         let mk = MinKey::new(ty, pkey);
         let mut left = self.0.range(mk.start_ty()..=mk).rev();
-
-        
         left.next()
     }
+    pub fn get_in_one_mut(&mut self, ty: u64, pkey: u64) -> Option<(&'_ MinKey, &'_ mut CHValue)> {
+        let mk = MinKey::new(ty, pkey);
+        let mut left = self.0.range_mut(mk.start_ty()..=mk).rev();
+        left.next()
+    }
+
 
     pub fn push(&mut self, pos: u64, chunk_header: ChunkHeader) {
         // Check
@@ -194,16 +202,19 @@ impl ChunkHeaderIndex {
         self.push(prev.location, prev.ch);
     }
     pub fn update_limits(&mut self, ty: u64, loc: u64, pkey: u64) {
-        let x = self.get_in_one(ty, pkey).unwrap();
+        let x = self.get_in_one_mut(ty, pkey).unwrap();
         assert_eq!(x.1.location, loc);
         let x0 = *x.0;
-        if !x.1.ch.limits.overlaps(&(pkey..=pkey)) {
+        if x.0.pkey > pkey {
             let mut new_limit = x.1.ch.limits.clone();
             new_limit.add(pkey);
             let mut value = self.0.remove(&x0).unwrap();
             value.ch.limits = new_limit.clone();
             let mk = MinKey::new(ty, new_limit.min.unwrap());
             self.0.insert(mk, value);
+        } else if !x.1.ch.limits.overlaps(&(pkey..=pkey)) {
+            // Just update the value
+            x.1.ch.limits.add(pkey);
         }
     }
 }
