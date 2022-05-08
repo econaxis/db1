@@ -4,7 +4,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
-use std::fmt::{Debug, Write as OW};
+use std::fmt::{Debug, format, Write as OW};
 use std::fs::File;
 use std::io::{Cursor, Read, Seek, Write};
 use std::option::Option::None;
@@ -13,9 +13,10 @@ use std::sync::Once;
 
 use {BytesSerialize, SuitableDataType};
 use db1_string::Db1String;
+use dynamic_tuple::TypeData::Null;
 use FromReader;
 use gen_suitable_data_type_impls;
-use serializer::{ PageSerializer};
+use serializer::{PageSerializer};
 use table_base2::{Heap, TableBase2};
 use table_base::read_to_buf;
 
@@ -41,6 +42,7 @@ impl From<u64> for Type {
 pub enum TypeData {
     Int(u64),
     String(Db1String),
+    Null,
 }
 
 impl From<&'_ str> for TypeData {
@@ -99,7 +101,7 @@ impl TupleBuilder {
     pub fn extract_string(&self, ind: usize) -> &[u8] {
         match &self.fields[ind] {
             TypeData::String(i) => i.as_buffer(),
-            _ => panic!(),
+            _ => panic!("{:?}", self),
         }
     }
     pub fn add_int(mut self, i: u64) -> Self {
@@ -123,6 +125,7 @@ impl TupleBuilder {
                 TypeData::String(s) => {
                     s.serialize_with_heap(&mut writer, &mut heap);
                 }
+                _ => panic!()
             }
         }
         let len = writer.position();
@@ -159,17 +162,21 @@ impl DynamicTuple {
             let t = self.fields[index as usize];
             match t {
                 Type::Int => {
-                    answer.push(TypeData::Int(u64::from_le_bytes(read_to_buf(&mut slice))));
+                    let data = TypeData::Int(u64::from_le_bytes(read_to_buf(&mut slice)));
+                    if fully_load {
+                        answer.push(data);
+                    } else {
+                        answer.push(TypeData::Null)
+                    }
                 }
                 Type::String => {
-                    let mut db1 = Db1String::read_to_ptr(&mut slice, heap);
-                    let td = if fully_load {
-                        db1.resolve_item(heap);
-                        TypeData::String(db1)
+                    let mut data = Db1String::read_to_ptr(&mut slice, heap);
+                    if fully_load {
+                        data.resolve_item(heap);
+                        answer.push(TypeData::String(data));
                     } else {
-                        TypeData::Int(0)
-                    };
-                    answer.push(td);
+                        answer.push(TypeData::Null)
+                    }
                 }
             }
         }
@@ -840,6 +847,9 @@ impl NamedTables {
 
     fn calculate_column_mask(table: &TypedTable, fields: &[String]) -> u64 {
         let mut mask = 0;
+        if fields.is_empty() {
+            return u64::MAX;
+        }
         for f in fields {
             if f == "*" {
                 mask = u64::MAX;
@@ -861,6 +871,8 @@ impl NamedTables {
         let col_mask = Self::calculate_column_mask(table, &select.columns);
 
         let filter = select.filter;
+
+        // TODO: only supports the first filter condition for now
         match filter.first() {
             Some(Filter::Equals(colname, TypeData::Int(icomp))) => {
                 match table.column_map[colname] {
@@ -873,7 +885,7 @@ impl NamedTables {
                             .filter(|i| {
                                 match i.fields[colindex as usize] {
                                     TypeData::Int(int) => int == *icomp,
-                                    TypeData::String(_) => panic!(),
+                                    TypeData::String(_) | TypeData::Null => panic!(),
                                 }
                             });
                         query_result
@@ -891,7 +903,7 @@ impl NamedTables {
                     });
                 qr
             }
-            None => table.get_all(col_mask, ps),
+            None | Some(Filter::Equals(_, Null)) => table.get_all(col_mask, ps),
         }
     }
 }
@@ -931,10 +943,10 @@ fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
 
     parse_lex_sql("CREATE TABLE tbl (id INT, name STRING, telephone STRING)", &mut nt, &mut ps);
 
-    let mut indices: Vec<u64> = (0..1_000_000).collect();
+    let mut indices: Vec<u64> = (0..1_000_00).collect();
     indices.shuffle(&mut thread_rng());
     let mut j = indices.iter().cycle();
-    for _ in 0..1_000_000 {
+    for _ in 0..1_000_00 {
         let j = *j.next().unwrap();
         let i = j + 10;
         parse_lex_sql(&format!(r#"INSERT INTO tbl VALUES ({i}, "hello{i} world", "{i}"), ({j}, "hello{j} world", "{j}")"#), &mut nt, &mut ps);
@@ -1103,17 +1115,19 @@ fn named_table_exec_insert() {
         );
     }
     for i in 0..100 {
-        dbg!(nt.execute_select(
+        let res = nt.execute_select(
             Select {
                 tbl_name: "tbl1".to_string(),
-                columns: vec![],
+                columns: vec!["name".to_string()],
                 filter: vec![Filter::Equals(
                     "name".to_string(),
                     TypeData::String(format!("file{i}.jpeg").into()),
                 )],
             },
             &mut ps1,
-        ).results());
+        ).results();
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].extract_string(1), format!("file{i}.jpeg").as_bytes());
     }
 }
 
@@ -1161,6 +1175,10 @@ pub unsafe extern "C" fn sql_exec(ptr: *mut DynamicTable<File>, query: *const c_
                     TypeData::Int(i) => output_string.write_fmt(format_args!("{}", i)).unwrap(),
                     TypeData::String(s) => {
                         output_string.write_fmt(format_args!("\"{}\"", std::str::from_utf8(s.as_buffer()).unwrap())).unwrap()
+                    }
+                    TypeData::Null => {
+                        // TODO: write Null instead of Int(0). Need to fix also in the Python parser module.
+                        output_string.write_fmt(format_args!("{}", 0)).unwrap()
                     }
                 };
             }

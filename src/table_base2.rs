@@ -268,6 +268,7 @@ impl TableBase2 {
 
 
     pub fn force_flush<W: Write + Read + Seek>(&mut self, ps: &mut PageSerializer<W>) -> u64 {
+        println!("Forcing flush");
         if std::thread::panicking() {
             return 0;
         }
@@ -289,6 +290,7 @@ impl TableBase2 {
         let len = buf.len();
 
         let new_pos = ps.add_page(buf, len as u64, ch);
+        println!("Loaded loc: {}; Len: {}", new_pos, len);
         self.loaded_location = Some(new_pos);
         self.dirty = false;
         new_pos
@@ -322,8 +324,10 @@ impl FromReader for TableBase2 {
         let mut data = vec![0u8; data_size as usize];
         let mut heap = vec![0u8; heap_size as usize];
 
+        // why is this even here??
         data.reserve(data.len().saturating_sub(16000));
         heap.reserve(heap.len().saturating_sub(16000));
+
         r.read_exact(&mut data).unwrap();
         r.read_exact(&mut heap).unwrap();
 

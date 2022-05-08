@@ -7,10 +7,11 @@
 #![feature(seek_stream_len)]
 #![feature(termination_trait_lib)]
 #![feature(test)]
-#![feature(process_exitcode_placeholder)]
+#![feature(entry_insert)]
 #![feature(write_all_vectored)]
 extern crate rand;
 extern crate test;
+extern crate core;
 
 use std::cmp::Ordering;
 use std::ffi::{CStr, CString};

@@ -248,7 +248,7 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
             .or_insert_with(
                 || {
                     let page_reader = Self::file_get_page(file, p);
-
+                    println!("Location: {p}, len: {}", page_reader.1);
                     let mut page = TableBase2::from_reader_and_heap(page_reader, &[]);
                     page.loaded_location = Some(p);
                     page
