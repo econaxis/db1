@@ -1,5 +1,6 @@
 from functools import reduce
 
+
 from astnode import AstNode
 from instruction import Instruction
 
