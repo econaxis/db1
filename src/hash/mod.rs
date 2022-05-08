@@ -70,7 +70,7 @@ impl HashDb {
             heap_size: 0,
             limits: Range {
                 min: Some(0),
-                max: Some(0)
+                max: Some(0),
             },
             compressed_size: 0,
         }

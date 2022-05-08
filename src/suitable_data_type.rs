@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
-use std::io::{Read};
+use std::io::Read;
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
 use crate::from_reader;

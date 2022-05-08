@@ -1,24 +1,22 @@
-extern crate rand_chacha;
-
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
-use std::fmt::{Debug, format, Write as OW};
+use std::fmt::{format, Debug, Write as OW};
 use std::fs::File;
 use std::io::{Cursor, Read, Seek, Write};
 use std::option::Option::None;
 use std::os::raw::c_char;
 use std::sync::Once;
 
-use {BytesSerialize, SuitableDataType};
 use db1_string::Db1String;
 use dynamic_tuple::TypeData::Null;
-use FromReader;
 use gen_suitable_data_type_impls;
-use serializer::{PageSerializer};
-use table_base2::{Heap, TableBase2};
+use serializer::PageSerializer;
 use table_base::read_to_buf;
+use table_base2::{Heap, TableBase2};
+use FromReader;
+use {BytesSerialize, SuitableDataType};
 
 use crate::query_data::QueryData;
 
@@ -125,7 +123,7 @@ impl TupleBuilder {
                 TypeData::String(s) => {
                     s.serialize_with_heap(&mut writer, &mut heap);
                 }
-                _ => panic!()
+                _ => panic!(),
             }
         }
         let len = writer.position();
@@ -180,9 +178,7 @@ impl DynamicTuple {
                 }
             }
         }
-        TupleBuilder {
-            fields: answer
-        }
+        TupleBuilder { fields: answer }
     }
 
     pub fn read_tuple_bytes(&self, a: &[u8], heap: &mut Heap) -> TupleBuilder {
@@ -256,28 +252,35 @@ struct TypedTable {
 pub trait RWS = Read + Write + Seek;
 
 impl TypedTable {
-    fn get_in_all<'a, W: RWS>(&self, pkey: u64, load_columns: u64, ps: &'a mut PageSerializer<W>) -> QueryData<'a, W> {
+    fn get_in_all<'a, W: RWS>(
+        &self,
+        pkey: u64,
+        load_columns: u64,
+        ps: &'a mut PageSerializer<W>,
+    ) -> QueryData<'a, W> {
         let mut answer = Vec::new();
         let pages = ps.get_in_all(self.id_ty, Some(pkey));
         for location in &pages {
             let table = ps.load_page_cached(*location);
             for bytes in table.search_value(pkey) {
-                let tuple = self.ty.read_tuple(bytes, load_columns, table.heap().get_ref());
+                let tuple = self
+                    .ty
+                    .read_tuple(bytes, load_columns, table.heap().get_ref());
                 answer.push(tuple);
             }
         }
-        QueryData::new(
-            answer,
-            pages,
-            ps,
-        )
+        QueryData::new(answer, pages, ps)
     }
 
     fn exists_in_page_serializer(&self, ps: &PageSerializer<impl RWS>) -> bool {
         ps.get_in_all(self.id_ty, None).is_some()
     }
 
-    fn get_all<'a, W: RWS>(&self, col_mask: u64, ps: &'a mut PageSerializer<W>) -> QueryData<'a, W> {
+    fn get_all<'a, W: RWS>(
+        &self,
+        col_mask: u64,
+        ps: &'a mut PageSerializer<W>,
+    ) -> QueryData<'a, W> {
         let mut answer = Vec::new();
         let pages = ps.get_in_all(self.id_ty, None);
         for location in &pages {
@@ -288,11 +291,7 @@ impl TypedTable {
                 answer.push(tuple);
             }
         }
-        QueryData::new(
-            answer,
-            pages,
-            ps,
-        )
+        QueryData::new(answer, pages, ps)
     }
 
     fn store_raw(&self, t: TupleBuilder, ps: &mut PageSerializer<impl RWS>) {
@@ -300,7 +299,8 @@ impl TypedTable {
         let pkey = t.first();
         let (location, page) = match ps.get_in_all_insert(self.id_ty, pkey) {
             Some(location) => {
-                ps.previous_headers.update_limits(self.id_ty, location, pkey);
+                ps.previous_headers
+                    .update_limits(self.id_ty, location, pkey);
                 let page = ps.load_page_cached(location);
                 page.insert_tb(t);
                 (location, page)
@@ -319,7 +319,8 @@ impl TypedTable {
             if let Some(mut x) = newpage {
                 assert!(!x.limits.overlaps(&page.limits));
                 let page_limits = page.limits.clone();
-                ps.previous_headers.reset_limits(self.id_ty, old_min_limits, page_limits);
+                ps.previous_headers
+                    .reset_limits(self.id_ty, old_min_limits, page_limits);
                 x.force_flush(ps);
             }
         }
@@ -460,7 +461,10 @@ fn parse_create_table(str: TokenStreamRef) -> CreateTable {
         }
     }
 
-    CreateTable { tbl_name: tbl_name.to_string(), fields }
+    CreateTable {
+        tbl_name: tbl_name.to_string(),
+        fields,
+    }
 }
 
 fn lex(str: &str) -> TokenStream {
@@ -507,7 +511,12 @@ fn lex(str: &str) -> TokenStream {
             "(" => Token::LParens,
             ")" => Token::RParens,
             a => {
-                assert!(a.chars().all(|a| a.is_alphanumeric() || a == '_' || a == '*'), "{}", a);
+                assert!(
+                    a.chars()
+                        .all(|a| a.is_alphanumeric() || a == '_' || a == '*'),
+                    "{}",
+                    a
+                );
 
                 if a.chars().all(|a| a.is_numeric()) {
                     Token::Number(a.parse::<u64>().unwrap())
@@ -521,7 +530,10 @@ fn lex(str: &str) -> TokenStream {
         }
     }
     tokens.push(Token::End);
-    TokenStream { a: tokens, ind: Cell::new(0) }
+    TokenStream {
+        a: tokens,
+        ind: Cell::new(0),
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -536,7 +548,10 @@ struct Select {
     filter: Vec<Filter>,
 }
 
-fn parse_comma_delimited_list<'a, 'b, T: 'b, F: Fn(TokenStreamRef<'a, 'b>) -> T>(str: TokenStreamRef<'a, 'b>, f: F) -> Vec<T> {
+fn parse_comma_delimited_list<'a, 'b, T: 'b, F: Fn(TokenStreamRef<'a, 'b>) -> T>(
+    str: TokenStreamRef<'a, 'b>,
+    f: F,
+) -> Vec<T> {
     let mut a = Vec::new();
     loop {
         a.push(f(str));
@@ -602,7 +617,11 @@ fn parse_sql(str: TokenStreamRef) -> SQL {
     }
 }
 
-fn parse_lex_sql<'a, W: RWS>(str: &str, table: &'a mut NamedTables, ps: &'a mut PageSerializer<W>) -> Option<QueryData<'a, W>> {
+fn parse_lex_sql<'a, W: RWS>(
+    str: &str,
+    table: &'a mut NamedTables,
+    ps: &'a mut PageSerializer<W>,
+) -> Option<QueryData<'a, W>> {
     let mut lexed = lex(str);
     let parsed = parse_sql(&mut lexed);
     match parsed {
@@ -707,8 +726,8 @@ fn typed_table_test() {
             vec![TupleBuilder::default()
                 .add_int(i)
                 .add_string(format!("hello{i}"))
-                .add_string(format!("world{i}"))]
-            , "{}",
+                .add_string(format!("world{i}"))],
+            "{}",
             i
         );
         assert_eq!(
@@ -878,29 +897,23 @@ impl NamedTables {
                 match table.column_map[colname] {
                     0 => table.get_in_all(*icomp, col_mask, ps),
                     colindex => {
-                        let mut query_result = table
-                            .get_all(col_mask, ps);
+                        let mut query_result = table.get_all(col_mask, ps);
 
-                        query_result
-                            .filter(|i| {
-                                match i.fields[colindex as usize] {
-                                    TypeData::Int(int) => int == *icomp,
-                                    TypeData::String(_) | TypeData::Null => panic!(),
-                                }
-                            });
+                        query_result.filter(|i| match i.fields[colindex as usize] {
+                            TypeData::Int(int) => int == *icomp,
+                            TypeData::String(_) | TypeData::Null => panic!(),
+                        });
                         query_result
                     }
                 }
             }
             Some(Filter::Equals(colname, TypeData::String(s))) => {
                 let colindex = table.column_map[colname];
-                let mut qr = table
-                    .get_all(col_mask, ps);
-                qr
-                    .filter(|i| match &i.fields[colindex as usize] {
-                        TypeData::String(s1) => s1 == s,
-                        _ => panic!(),
-                    });
+                let mut qr = table.get_all(col_mask, ps);
+                qr.filter(|i| match &i.fields[colindex as usize] {
+                    TypeData::String(s1) => s1 == s,
+                    _ => panic!(),
+                });
                 qr
             }
             None | Some(Filter::Equals(_, Null)) => table.get_all(col_mask, ps),
@@ -913,35 +926,106 @@ fn test_sql_all() {
     let mut ps = PageSerializer::create(Cursor::new(Vec::new()), Some(16000));
     let mut nt = NamedTables::new(&mut ps);
 
-    parse_lex_sql("CREATE TABLE tbl (id INT, name STRING, telephone STRING)", &mut nt, &mut ps);
-    parse_lex_sql(r#"INSERT INTO tbl VALUES (3, "hello3 world", "30293204823")"#, &mut nt, &mut ps);
-    parse_lex_sql(r#"INSERT INTO tbl VALUES (4, "hello4 world", "3093204823")"#, &mut nt, &mut ps);
-    parse_lex_sql(r#"INSERT INTO tbl VALUES (5, "hello5 world", "3293204823")"#, &mut nt, &mut ps);
-    parse_lex_sql("CREATE TABLE tbl1 (id INT, name STRING, fax INT)", &mut nt, &mut ps);
-    parse_lex_sql(r#"INSERT INTO tbl VALUES (6, "hello6 world", "0293204823")"#, &mut nt, &mut ps);
-    parse_lex_sql(r#"INSERT INTO tbl1 VALUES (7, "hello7 world", 293204823), (9, "hellfdsoa f", 3209324830294)"#, &mut nt, &mut ps);
-    parse_lex_sql(r#"INSERT INTO tbl1 VALUES (8, "hello8 world", 3209324830294)"#, &mut nt, &mut ps);
-    let answer1 = parse_lex_sql(r#"SELECT id, name, telephone FROM tbl WHERE id EQUALS 4"#, &mut nt, &mut ps).unwrap().results();
-    let answer2 = parse_lex_sql(r#"SELECT id, fax FROM tbl1 WHERE fax EQUALS 3209324830294 "#, &mut nt, &mut ps).unwrap().results();
+    parse_lex_sql(
+        "CREATE TABLE tbl (id INT, name STRING, telephone STRING)",
+        &mut nt,
+        &mut ps,
+    );
+    parse_lex_sql(
+        r#"INSERT INTO tbl VALUES (3, "hello3 world", "30293204823")"#,
+        &mut nt,
+        &mut ps,
+    );
+    parse_lex_sql(
+        r#"INSERT INTO tbl VALUES (4, "hello4 world", "3093204823")"#,
+        &mut nt,
+        &mut ps,
+    );
+    parse_lex_sql(
+        r#"INSERT INTO tbl VALUES (5, "hello5 world", "3293204823")"#,
+        &mut nt,
+        &mut ps,
+    );
+    parse_lex_sql(
+        "CREATE TABLE tbl1 (id INT, name STRING, fax INT)",
+        &mut nt,
+        &mut ps,
+    );
+    parse_lex_sql(
+        r#"INSERT INTO tbl VALUES (6, "hello6 world", "0293204823")"#,
+        &mut nt,
+        &mut ps,
+    );
+    parse_lex_sql(
+        r#"INSERT INTO tbl1 VALUES (7, "hello7 world", 293204823), (9, "hellfdsoa f", 3209324830294)"#,
+        &mut nt,
+        &mut ps,
+    );
+    parse_lex_sql(
+        r#"INSERT INTO tbl1 VALUES (8, "hello8 world", 3209324830294)"#,
+        &mut nt,
+        &mut ps,
+    );
+    let answer1 = parse_lex_sql(
+        r#"SELECT id, name, telephone FROM tbl WHERE id EQUALS 4"#,
+        &mut nt,
+        &mut ps,
+    )
+    .unwrap()
+    .results();
+    let answer2 = parse_lex_sql(
+        r#"SELECT id, fax FROM tbl1 WHERE fax EQUALS 3209324830294 "#,
+        &mut nt,
+        &mut ps,
+    )
+    .unwrap()
+    .results();
     dbg!(&answer1, &answer2);
 
     let mut ps = PageSerializer::create_from_reader(ps.move_file(), Some(16000));
     let mut nt = NamedTables::new(&mut ps);
-    assert_eq!(parse_lex_sql(r#"SELECT id, name, telephone FROM tbl WHERE id EQUALS 4 "#, &mut nt, &mut ps).unwrap().results(), answer1);
-    assert_eq!(parse_lex_sql(r#"SELECT id, fax FROM tbl1 WHERE fax EQUALS 3209324830294 "#, &mut nt, &mut ps).unwrap().results(), answer2);
+    assert_eq!(
+        parse_lex_sql(
+            r#"SELECT id, name, telephone FROM tbl WHERE id EQUALS 4 "#,
+            &mut nt,
+            &mut ps
+        )
+        .unwrap()
+        .results(),
+        answer1
+    );
+    assert_eq!(
+        parse_lex_sql(
+            r#"SELECT id, fax FROM tbl1 WHERE fax EQUALS 3209324830294 "#,
+            &mut nt,
+            &mut ps
+        )
+        .unwrap()
+        .results(),
+        answer2
+    );
 }
-
 
 #[bench]
 fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
     use rand::seq::SliceRandom;
     use rand::thread_rng;
     ENVLOGGER.call_once(env_logger::init);
-    let file = File::options().truncate(true).create(true).read(true).write(true).open("/tmp/test_selects").unwrap();
+    let file = File::options()
+        .truncate(true)
+        .create(true)
+        .read(true)
+        .write(true)
+        .open("/tmp/test_selects")
+        .unwrap();
     let mut ps = PageSerializer::create(file, None);
     let mut nt = NamedTables::new(&mut ps);
 
-    parse_lex_sql("CREATE TABLE tbl (id INT, name STRING, telephone STRING)", &mut nt, &mut ps);
+    parse_lex_sql(
+        "CREATE TABLE tbl (id INT, name STRING, telephone STRING)",
+        &mut nt,
+        &mut ps,
+    );
 
     let mut indices: Vec<u64> = (0..1_000_00).collect();
     indices.shuffle(&mut thread_rng());
@@ -949,11 +1033,21 @@ fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
     for _ in 0..1_000_00 {
         let j = *j.next().unwrap();
         let i = j + 10;
-        parse_lex_sql(&format!(r#"INSERT INTO tbl VALUES ({i}, "hello{i} world", "{i}"), ({j}, "hello{j} world", "{j}")"#), &mut nt, &mut ps);
+        parse_lex_sql(
+            &format!(
+                r#"INSERT INTO tbl VALUES ({i}, "hello{i} world", "{i}"), ({j}, "hello{j} world", "{j}")"#
+            ),
+            &mut nt,
+            &mut ps,
+        );
     }
     b.iter(|| {
         let j = *j.next().unwrap();
-        let res1 = parse_lex_sql(&format!("SELECT * FROM tbl WHERE id EQUALS {j}"), &mut nt, &mut ps);
+        let res1 = parse_lex_sql(
+            &format!("SELECT * FROM tbl WHERE id EQUALS {j}"),
+            &mut nt,
+            &mut ps,
+        );
         if let Some(r) = res1 {
             r.results();
         }
@@ -966,11 +1060,21 @@ fn test_lots_inserts() {
     use rand::SeedableRng;
     ENVLOGGER.call_once(env_logger::init);
     let mut a = rand_chacha::ChaCha20Rng::seed_from_u64(1);
-    let file = File::options().truncate(true).create(true).read(true).write(true).open("/tmp/test-lots-inserts").unwrap();
+    let file = File::options()
+        .truncate(true)
+        .create(true)
+        .read(true)
+        .write(true)
+        .open("/tmp/test-lots-inserts")
+        .unwrap();
     let mut ps = PageSerializer::create(file, Some(16000));
     let mut nt = NamedTables::new(&mut ps);
 
-    parse_lex_sql("CREATE TABLE tbl (id INT, name STRING, telephone STRING)", &mut nt, &mut ps);
+    parse_lex_sql(
+        "CREATE TABLE tbl (id INT, name STRING, telephone STRING)",
+        &mut nt,
+        &mut ps,
+    );
 
     let mut indices: Vec<u64> = (0..100_000).collect();
     indices.shuffle(&mut a);
@@ -978,7 +1082,13 @@ fn test_lots_inserts() {
     for _ in 0..1_0000 {
         let j = j.next().unwrap();
         let i = j + 10;
-        parse_lex_sql(&format!(r#"INSERT INTO tbl VALUES ({i}, "hello{i} world", "{i}"), ({j}, "hello{j} world", "{j}")"#), &mut nt, &mut ps);
+        parse_lex_sql(
+            &format!(
+                r#"INSERT INTO tbl VALUES ({i}, "hello{i} world", "{i}"), ({j}, "hello{j} world", "{j}")"#
+            ),
+            &mut nt,
+            &mut ps,
+        );
     }
 }
 
@@ -988,11 +1098,21 @@ fn lots_inserts(b: &mut test::Bencher) -> impl std::process::Termination {
     use rand::SeedableRng;
     ENVLOGGER.call_once(env_logger::init);
     let mut a = rand_chacha::ChaCha20Rng::seed_from_u64(1);
-    let file = File::options().truncate(true).create(true).read(true).write(true).open("/tmp/test-lots-inserts").unwrap();
+    let file = File::options()
+        .truncate(true)
+        .create(true)
+        .read(true)
+        .write(true)
+        .open("/tmp/test-lots-inserts")
+        .unwrap();
     let mut ps = PageSerializer::create(file, None);
     let mut nt = NamedTables::new(&mut ps);
 
-    parse_lex_sql("CREATE TABLE tbl (id INT, name STRING, telephone STRING, description STRING)", &mut nt, &mut ps);
+    parse_lex_sql(
+        "CREATE TABLE tbl (id INT, name STRING, telephone STRING, description STRING)",
+        &mut nt,
+        &mut ps,
+    );
 
     let mut indices: Vec<u64> = (0..2_000_000).collect();
     indices.shuffle(&mut a);
@@ -1022,7 +1142,6 @@ fn lots_inserts(b: &mut test::Bencher) -> impl std::process::Termination {
     // });
 }
 
-
 #[test]
 fn named_table_exec_insert() {
     ENVLOGGER.call_once(env_logger::init);
@@ -1051,42 +1170,48 @@ fn named_table_exec_insert() {
         &mut ps,
     );
 
-    dbg!(nt.execute_select(
-        Select {
-            tbl_name: "tbl_name".to_string(),
-            columns: vec![],
-            filter: vec![Filter::Equals("id".to_string(), TypeData::Int(2))],
-        },
-        &mut ps,
-    ).results());
-    dbg!(nt.execute_select(
-        Select {
-            tbl_name: "tbl_name".to_string(),
-            columns: vec![],
-            filter: vec![Filter::Equals(
-                "name".to_string(),
-                TypeData::String("hello4".into()),
-            )],
-        },
-        &mut ps,
-    ).results());
+    dbg!(nt
+        .execute_select(
+            Select {
+                tbl_name: "tbl_name".to_string(),
+                columns: vec![],
+                filter: vec![Filter::Equals("id".to_string(), TypeData::Int(2))],
+            },
+            &mut ps,
+        )
+        .results());
+    dbg!(nt
+        .execute_select(
+            Select {
+                tbl_name: "tbl_name".to_string(),
+                columns: vec![],
+                filter: vec![Filter::Equals(
+                    "name".to_string(),
+                    TypeData::String("hello4".into()),
+                )],
+            },
+            &mut ps,
+        )
+        .results());
 
     ps.unload_all();
     let prev_headers = ps.clone_headers();
     let mut ps1 = PageSerializer::create_from_reader(ps.move_file(), None);
     assert_eq!(ps1.clone_headers(), prev_headers);
     let mut nt = NamedTables::new(&mut ps1);
-    dbg!(nt.execute_select(
-        Select {
-            tbl_name: "tbl_name".to_string(),
-            columns: vec![],
-            filter: vec![Filter::Equals(
-                "name".to_string(),
-                TypeData::String("hello4".into()),
-            )],
-        },
-        &mut ps1,
-    ).results());
+    dbg!(nt
+        .execute_select(
+            Select {
+                tbl_name: "tbl_name".to_string(),
+                columns: vec![],
+                filter: vec![Filter::Equals(
+                    "name".to_string(),
+                    TypeData::String("hello4".into()),
+                )],
+            },
+            &mut ps1,
+        )
+        .results());
 
     nt.insert_table(
         CreateTable {
@@ -1115,17 +1240,19 @@ fn named_table_exec_insert() {
         );
     }
     for i in 0..100 {
-        let res = nt.execute_select(
-            Select {
-                tbl_name: "tbl1".to_string(),
-                columns: vec!["name".to_string()],
-                filter: vec![Filter::Equals(
-                    "name".to_string(),
-                    TypeData::String(format!("file{i}.jpeg").into()),
-                )],
-            },
-            &mut ps1,
-        ).results();
+        let res = nt
+            .execute_select(
+                Select {
+                    tbl_name: "tbl1".to_string(),
+                    columns: vec!["name".to_string()],
+                    filter: vec![Filter::Equals(
+                        "name".to_string(),
+                        TypeData::String(format!("file{i}.jpeg").into()),
+                    )],
+                },
+                &mut ps1,
+            )
+            .results();
         assert_eq!(res.len(), 1);
         assert_eq!(res[0].extract_string(1), format!("file{i}.jpeg").as_bytes());
     }
@@ -1142,12 +1269,20 @@ static ENVLOGGER: Once = Once::new();
 pub unsafe extern "C" fn sql_new(path: *const c_char) -> *mut DynamicTable<File> {
     ENVLOGGER.call_once(env_logger::init);
     let path = CStr::from_ptr(path).to_str().unwrap();
-    let file = File::options().create(true).read(true).write(true).open(path).unwrap();
+    let file = File::options()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap();
     Box::leak(Box::new(DynamicTable::new(file)))
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sql_exec(ptr: *mut DynamicTable<File>, query: *const c_char) -> *const c_char {
+pub unsafe extern "C" fn sql_exec(
+    ptr: *mut DynamicTable<File>,
+    query: *const c_char,
+) -> *const c_char {
     let db = &mut *ptr;
     let query = CStr::from_ptr(query).to_string_lossy();
 
@@ -1173,9 +1308,12 @@ pub unsafe extern "C" fn sql_exec(ptr: *mut DynamicTable<File>, query: *const c_
 
                 match field {
                     TypeData::Int(i) => output_string.write_fmt(format_args!("{}", i)).unwrap(),
-                    TypeData::String(s) => {
-                        output_string.write_fmt(format_args!("\"{}\"", std::str::from_utf8(s.as_buffer()).unwrap())).unwrap()
-                    }
+                    TypeData::String(s) => output_string
+                        .write_fmt(format_args!(
+                            "\"{}\"",
+                            std::str::from_utf8(s.as_buffer()).unwrap()
+                        ))
+                        .unwrap(),
                     TypeData::Null => {
                         // TODO: write Null instead of Int(0). Need to fix also in the Python parser module.
                         output_string.write_fmt(format_args!("{}", 0)).unwrap()
@@ -1194,15 +1332,29 @@ pub unsafe extern "C" fn sql_exec(ptr: *mut DynamicTable<File>, query: *const c_
 #[test]
 fn test_sql_c_api() {
     unsafe {
-        let tb = sql_new(CStr::from_bytes_with_nul(b"/tmp/test_sql_c_api.db\0").unwrap().as_ptr());
+        let tb = sql_new(
+            CStr::from_bytes_with_nul(b"/tmp/test_sql_c_api.db\0")
+                .unwrap()
+                .as_ptr(),
+        );
         let q1 = "CREATE TABLE tbl1 (pkey INT, telephone INT, a STRING)".to_string();
         let q2 = r#"INSERT INTO tbl1 VALUES (1, 90328023, "hello"), (2, 32084432, "world"), (3, 32084432, "world"), (4, 32084432, "world")"#.to_string();
         let q3 = r#"SELECT pkey, a FROM tbl1 WHERE a EQUALS "world""#.to_string();
         let q4 = "SELECT pkey, a FROM tbl1\0".to_string();
         sql_exec(tb, q1.as_ptr() as *const c_char);
         sql_exec(tb, q2.as_ptr() as *const c_char);
-        println!("{}", CStr::from_ptr(sql_exec(tb, q3.as_ptr() as *const c_char)).to_str().unwrap());
-        println!("{}", CStr::from_ptr(sql_exec(tb, q4.as_ptr() as *const c_char)).to_str().unwrap());
+        println!(
+            "{}",
+            CStr::from_ptr(sql_exec(tb, q3.as_ptr() as *const c_char))
+                .to_str()
+                .unwrap()
+        );
+        println!(
+            "{}",
+            CStr::from_ptr(sql_exec(tb, q4.as_ptr() as *const c_char))
+                .to_str()
+                .unwrap()
+        );
     }
 }
 

@@ -4,10 +4,10 @@ use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::ops::RangeBounds;
 use std::option::Option::None;
 
-use {ChunkHeader, FromReader};
 use chunk_header::ChunkHeaderIndex;
-use table_base2::TableBase2;
 use table_base::read_to_buf;
+use table_base2::TableBase2;
+use {ChunkHeader, FromReader};
 
 #[derive(Debug)]
 pub struct PageSerializer<W: Read + Write + Seek> {
@@ -18,7 +18,6 @@ pub struct PageSerializer<W: Read + Write + Seek> {
     pub cache: HashMap<u64, TableBase2>,
     constant_size: Option<u64>,
 }
-
 
 impl Default for PageSerializer<Cursor<Vec<u8>>> {
     fn default() -> Self {
@@ -42,7 +41,7 @@ pub struct PageData<'a, W> {
     w: &'a mut W,
     pos: u64,
     len: u64,
-    nextpos: u64
+    nextpos: u64,
 }
 impl<'a, W> PageData<'a, W> {
     fn stream_pos(&self) -> u64 {
@@ -187,13 +186,13 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
                         w: file,
                         pos,
                         len: len as u64,
-                        nextpos: pos + 2 + 4 + len as u64
+                        nextpos: pos + 2 + 4 + len as u64,
                     }),
                     PageSerializer::<W>::DELETED_PAGE => PageResult::Deleted(PageData {
                         w: file,
                         pos,
                         len: len as u64,
-                        nextpos: pos + 2 + 4 + len as u64
+                        nextpos: pos + 2 + 4 + len as u64,
                     }),
                     _ => panic!("Tried to load page incorrectly at {:?}", pos),
                 }
@@ -239,21 +238,16 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
             }
         }
 
-
         self.pinned.insert(p);
 
-
         let file = &mut self.file;
-        self.cache.entry(p)
-            .or_insert_with(
-                || {
-                    let page_reader = Self::file_get_page(file, p);
-                    println!("Location: {p}, len: {}", page_reader.1);
-                    let mut page = TableBase2::from_reader_and_heap(page_reader, &[]);
-                    page.loaded_location = Some(p);
-                    page
-                }
-            )
+        self.cache.entry(p).or_insert_with(|| {
+            let page_reader = Self::file_get_page(file, p);
+            println!("Location: {p}, len: {}", page_reader.1);
+            let mut page = TableBase2::from_reader_and_heap(page_reader, &[]);
+            page.loaded_location = Some(p);
+            page
+        })
     }
     pub fn file_get_page(file: &mut W, position: u64) -> LimitedReader<&mut W> {
         match PageSerializer::<W>::page_checked(file, Some(position)) {
@@ -273,7 +267,10 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
         }
     }
 
-    pub fn move_file(&mut self) -> W where W: Default {
+    pub fn move_file(&mut self) -> W
+    where
+        W: Default,
+    {
         self.unload_all();
         self.previous_headers.0.clear();
         std::mem::take(&mut self.file)
@@ -340,7 +337,9 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
         self.file
             .write(&PageSerializer::<W>::WORKING_PAGE.to_le_bytes())
             .unwrap();
-        self.file.write(&(self.constant_size.unwrap_or(size) as u32).to_le_bytes()).unwrap();
+        self.file
+            .write(&(self.constant_size.unwrap_or(size) as u32).to_le_bytes())
+            .unwrap();
         self.file.write_all(&buf).unwrap();
 
         self.previous_headers.push(new_pos, ch);
@@ -351,7 +350,6 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
     pub fn get_page(&mut self, position: u64) -> LimitedReader<&'_ mut W> {
         Self::file_get_page(&mut self.file, position)
     }
-
 
     pub fn get_in_all(&self, ty: u64, r: Option<u64>) -> Option<u64> {
         let l = self.previous_headers.get_in_one(ty, r.unwrap_or(u64::MAX));
@@ -375,7 +373,7 @@ impl<W: Read + Write + Seek> Drop for PageSerializer<W> {
 
 #[test]
 fn serializer_works() {
-    use ::Range;
+    use Range;
 
     let default_ch = ChunkHeader {
         ty: 0,

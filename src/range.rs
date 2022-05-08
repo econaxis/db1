@@ -137,14 +137,14 @@ impl RangeBounds<u64> for Range<u64> {
     fn start_bound(&self) -> Bound<&u64> {
         match &self.min {
             None => Bound::Unbounded,
-            Some(x) => Bound::Included(x)
+            Some(x) => Bound::Included(x),
         }
     }
 
     fn end_bound(&self) -> Bound<&u64> {
         match &self.max {
             None => Bound::Unbounded,
-            Some(x) => Bound::Included(x)
+            Some(x) => Bound::Included(x),
         }
     }
 }

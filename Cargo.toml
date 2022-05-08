@@ -7,10 +7,10 @@ version = "0.1.0"
 [dependencies]
 log = "*"
 env_logger = {version = "*", default-features = false}
+rand = {version = "*", features = ["std", "std_rng"]}
+rand_chacha = "0.3.1"
 
 [dev-dependencies]
-rand = {version = "*", default-features = false, features = ["std", "std_rng"]}
-rand_chacha = "0.3.1"
 
 [profile.release]
 debug = false

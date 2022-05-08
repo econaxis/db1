@@ -1,17 +1,12 @@
-#![cfg(test)]
-
+use rand::distributions::Alphanumeric;
+use rand::prelude::SliceRandom;
+use rand::Rng;
 use std::cell::RefCell;
 use std::hash::Hash;
 use std::io::{Cursor, Seek, SeekFrom, Write};
-use std::ops::{Range as stdRange};
+use std::ops::Range as stdRange;
 
-use rand::distributions::Alphanumeric;
-use rand::prelude::SliceRandom;
-use rand::SeedableRng;
-use rand::{Rng};
-
-use serializer::{ PageSerializer};
-
+use serializer::PageSerializer;
 
 use crate::index::ImageDocument;
 use crate::suitable_data_type::DataType;
@@ -176,11 +171,11 @@ pub fn mess_up<W: Read + Write + Seek>(a: &mut PageSerializer<W>) {
             heap_size: 0,
             limits: Range {
                 min: Some(0),
-                max: Some(10)
+                max: Some(10),
             },
             compressed_size: 0,
             type_size: 0,
-        }
+        },
     );
 }
 
@@ -255,8 +250,7 @@ fn test1() {
 
     db.serializer().unload_all();
     let mut reader = db.serializer().move_file();
-    let mut db1 =
-        TableManager::<DataType, &mut Cursor<Vec<u8>>>::read_from_file(&mut reader);
+    let mut db1 = TableManager::<DataType, &mut Cursor<Vec<u8>>>::read_from_file(&mut reader);
     assert_eq!(&old_data, db1.get_in_all(None, u8::MAX));
     dbg!(db1);
 }
@@ -285,7 +279,7 @@ fn test2() {
     let mut db1 = TableManager::<DataType, &mut Cursor<Vec<u8>>>::read_from_file(&mut reader);
     assert_eq!(db1.get_in_all(None, u8::MAX), &ans);
 }
-
+use rand::SeedableRng;
 thread_local! {
     // pub static RAND: RefCell<ChaCha20Rng> = RefCell::new(ChaCha20Rng::from_entropy());
     pub static RAND: RefCell<rand_chacha::ChaCha20Rng> = RefCell::new(rand_chacha::ChaCha20Rng::seed_from_u64(1));

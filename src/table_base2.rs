@@ -5,15 +5,15 @@ use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::option::Option::None;
 
+use db1_string::Db1String;
+use dynamic_tuple::RWS;
+use dynamic_tuple::{DynamicTuple, DynamicTupleInstance, TupleBuilder};
+use hash::InvalidWriter;
+use serializer::PageSerializer;
+use table_base::read_to_buf;
+use BytesSerialize;
 use {ChunkHeader, Range};
 use {FromReader, SuitableDataType};
-use BytesSerialize;
-use db1_string::Db1String;
-use dynamic_tuple::{DynamicTuple, DynamicTupleInstance, TupleBuilder};
-use dynamic_tuple::RWS;
-use hash::InvalidWriter;
-use serializer::{PageSerializer};
-use table_base::read_to_buf;
 
 pub struct TableBase2 {
     pub ty: u64,
@@ -85,7 +85,6 @@ impl Debug for TableBase2 {
     }
 }
 
-
 /*
 Named table supports functions:
 
@@ -146,7 +145,10 @@ impl TableBase2 {
         (self.data.len() / self.type_size) as u64
     }
     pub fn serialized_len(&self) -> usize {
-        self.data.len() + self.heap.len() as usize + ChunkHeader::MAXTYPESIZE as usize + std::mem::size_of_val(&Self::TABLEBASE2)
+        self.data.len()
+            + self.heap.len() as usize
+            + ChunkHeader::MAXTYPESIZE as usize
+            + std::mem::size_of_val(&Self::TABLEBASE2)
     }
     pub fn heap_size(&self) -> u64 {
         self.heap.len()
@@ -185,7 +187,8 @@ impl TableBase2 {
         self.dirty = true;
         let position = self
             .binary_search(t.first())
-            .unwrap_or((self.data.len() / self.type_size) as u64) as usize * self.type_size;
+            .unwrap_or((self.data.len() / self.type_size) as u64) as usize
+            * self.type_size;
         let len = self.data.len();
         if self.data.capacity() < len + self.type_size {
             self.data.reserve(len + 200 * self.type_size);
@@ -199,8 +202,12 @@ impl TableBase2 {
         self.limits.add(t.first());
     }
     pub fn assert_sorted(&self) -> Vec<u64> {
-        assert!((0..self.len() as usize).map(|i| self.load_pkey(i * self.type_size)).is_sorted());
-        (0..self.len() as usize).map(|i| self.load_pkey(i * self.type_size)).collect()
+        assert!((0..self.len() as usize)
+            .map(|i| self.load_pkey(i * self.type_size))
+            .is_sorted());
+        (0..self.len() as usize)
+            .map(|i| self.load_pkey(i * self.type_size))
+            .collect()
     }
 
     pub fn insert_tb(&mut self, tb: TupleBuilder) {
@@ -210,9 +217,11 @@ impl TableBase2 {
 
     fn find_split_point(&self, mut v: usize) -> usize {
         assert!(v >= 1);
-        while v < self.len() as usize && self.load_pkey(v * self.type_size) == self.load_pkey((v - 1) * self.type_size) {
+        while v < self.len() as usize
+            && self.load_pkey(v * self.type_size) == self.load_pkey((v - 1) * self.type_size)
+        {
             v += 1;
-        };
+        }
         if v == self.len() as usize {
             panic!("Too many tuples of similar length")
         }
@@ -236,15 +245,17 @@ impl TableBase2 {
                 (&mut new_heap, &mut new_range)
             };
 
-            let tuple =
-                splitter.read_tuple(&self.data[i..i + self.type_size], u64::MAX, self.heap.0.get_mut());
+            let tuple = splitter.read_tuple(
+                &self.data[i..i + self.type_size],
+                u64::MAX,
+                self.heap.0.get_mut(),
+            );
             let new_tuple = tuple.build(&mut used_heap.0);
 
             assert_eq!(new_tuple.len, self.type_size);
             self.data[i..i + self.type_size].copy_from_slice(&new_tuple.data[0..self.type_size]);
             used_range.add(self.load_pkey(i));
         }
-
 
         self.heap = new_heap;
         self.limits = new_range;
@@ -266,7 +277,6 @@ impl TableBase2 {
         })
     }
 
-
     pub fn force_flush<W: Write + Read + Seek>(&mut self, ps: &mut PageSerializer<W>) -> u64 {
         println!("Forcing flush");
         if std::thread::panicking() {
@@ -276,7 +286,6 @@ impl TableBase2 {
         if self.loaded_location.is_some() {
             ps.free_page(self.ty, self.limits.min.unwrap());
         }
-
 
         let mut buf: Cursor<Vec<u8>> = Cursor::default();
         let ch = self.chunk_header();
@@ -347,10 +356,9 @@ impl FromReader for TableBase2 {
 
 #[test]
 fn works() {
-    use ::dynamic_tuple::Type;
+    use dynamic_tuple::Type;
     let mut db = TableBase2::new(19, (Db1String::TYPE_SIZE * 2 + 8) as usize);
     let mut ps = PageSerializer::create(Cursor::new(Vec::new()), None);
-
 
     let v: Vec<u64> = (0..1000).map(|a| (a * (a + 1000)) % 30).collect();
     for i in &v {
@@ -383,7 +391,6 @@ fn works() {
     let mut split_db = db.split(&dyntuple).unwrap();
     println!("Split result {:?} {:?}", db, split_db);
 
-
     dbg!(dyntuple.read_tuple(
         db.search_value((5 * 1005) % 30).first().unwrap(),
         0,
@@ -404,7 +411,6 @@ fn works() {
     let ps1 = PageSerializer::create_from_reader(f, None);
     assert!(ps1.get_in_all(19, None).is_some());
 }
-
 
 #[test]
 fn bp_works() {

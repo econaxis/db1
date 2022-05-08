@@ -9,9 +9,10 @@
 #![feature(test)]
 #![feature(entry_insert)]
 #![feature(write_all_vectored)]
+
+extern crate core;
 extern crate rand;
 extern crate test;
-extern crate core;
 
 use std::cmp::Ordering;
 use std::ffi::{CStr, CString};
@@ -40,7 +41,7 @@ mod dynamic_tuple;
 mod hash;
 mod heap_writer;
 mod index;
-mod mypdf;
+mod query_data;
 mod range;
 mod serializer;
 mod suitable_data_type;
@@ -49,7 +50,6 @@ mod table_base2;
 mod table_manager;
 mod table_traits;
 mod tests;
-mod query_data;
 
 #[repr(C)]
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -3,8 +3,8 @@ use std::hash::{Hash, Hasher};
 use std::io::{IoSlice, Read, Seek, Write};
 use std::os::raw::c_char;
 
-use crate::{BytesSerialize, FromReader};
 use crate::chunk_header::slice_from_type;
+use crate::{BytesSerialize, FromReader};
 
 #[derive(Clone, Eq)]
 #[repr(C)]
@@ -40,9 +40,7 @@ impl Hash for Db1String {
 impl Debug for Db1String {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Resolvedo(v, _) if v.len() >= 100 => {
-                f.write_str("Db1string over 100")
-            }
+            Self::Resolvedo(v, _) if v.len() >= 100 => f.write_str("Db1string over 100"),
             Self::Resolvedo(v, _) if !v.is_empty() => f.write_fmt(format_args!(
                 "db1\"{}\"",
                 std::str::from_utf8(v).unwrap_or("non-utf8")
@@ -78,7 +76,7 @@ impl Db1String {
     pub fn as_buffer(&self) -> &[u8] {
         match self {
             Self::Resolvedo(s, _) => s,
-            Self::Ptr(ptr, len) => unsafe { std::slice::from_raw_parts(*ptr, *len as usize) }
+            Self::Ptr(ptr, len) => unsafe { std::slice::from_raw_parts(*ptr, *len as usize) },
             _ => panic!(),
         }
     }
@@ -92,7 +90,7 @@ impl Db1String {
         match self {
             Self::Resolvedo(a, _) => (a.as_ptr(), a.len() as u64),
             Self::Unresolved(_, _) => (std::ptr::null(), 0),
-            Self::Ptr(ptr, len) => (*ptr, *len)
+            Self::Ptr(ptr, len) => (*ptr, *len),
         }
     }
     pub fn owned(&mut self) {
@@ -124,7 +122,7 @@ impl Db1String {
             Db1String::Unresolved(loc, len) => {
                 s = Db1String::Ptr(heap[loc as usize..].as_ptr(), len);
             }
-            _ => panic!()
+            _ => panic!(),
         }
         s
     }
@@ -148,7 +146,6 @@ impl From<Vec<u8>> for Db1String {
     }
 }
 
-
 fn as_bytes<T: 'static>(t: &T) -> &[u8] {
     let ptr = t as *const T as *const u8;
     let len = std::mem::size_of::<T>();
@@ -163,11 +160,11 @@ impl BytesSerialize for Db1String {
         let buf1 = IoSlice::new(as_bytes(&Self::STRING_CHECK_SEQ));
         let buf2 = IoSlice::new(as_bytes(&heap_position));
         let buf3 = IoSlice::new(as_bytes(&slicelen));
-        data.write_all_vectored([buf1, buf2, buf3].as_mut_slice()).unwrap();
+        data.write_all_vectored([buf1, buf2, buf3].as_mut_slice())
+            .unwrap();
         heap.write_all(slice).unwrap();
     }
 }
-
 
 impl FromReader for Db1String {
     fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {

@@ -1,13 +1,13 @@
 // todo: compression, secondary indexes
 
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, Write};
 use std::marker::PhantomData;
-use std::ops::{RangeBounds};
+use std::ops::RangeBounds;
 use std::option::Option::None;
 
-use serializer::{ PageSerializer};
+use serializer::PageSerializer;
 use table_base::TableBaseRangeIterator;
 use FromReader;
 
@@ -82,11 +82,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
             function,
         )
     }
-    pub fn get_in_all(
-        &mut self,
-        range: Option<u64>,
-        load_mask: u8,
-    ) -> &Vec<T> {
+    pub fn get_in_all(&mut self, range: Option<u64>, load_mask: u8) -> &Vec<T> {
         self.result_buffer.clear();
         self.result_buffer = ManagerFns::get_in_all(
             &mut self.db,
@@ -131,7 +127,6 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> TableManager<T, Writer> {
     pub fn force_flush(&mut self) -> Option<(ChunkHeader, Vec<T>)> {
         ManagerFns::force_flush(&mut self.db, &mut self.output_stream)
     }
-
 }
 
 impl<T: SuitableDataType, Writer: Write + Seek + Read> ManagerFns<T, Writer> {
@@ -152,8 +147,6 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> ManagerFns<T, Writer> {
         _os: &mut PageSerializer<Writer>,
         t: T,
     ) -> Option<T> {
-        
-
         // if Self::check_should_flush(db) {
         //     Self::force_flush(db, os);
         // }

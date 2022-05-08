@@ -10,7 +10,7 @@ use std::io::{Read, Seek, Write};
 
 use std::os::raw::c_char;
 
-use serializer::{PageSerializer};
+use serializer::PageSerializer;
 
 use crate::db1_string::Db1String;
 use crate::gen_suitable_data_type_impls;
@@ -315,11 +315,7 @@ impl<W: Write + Seek + Read> ImageDb<W> {
     }
 
     pub fn load_index(&mut self) {
-        let index_spot = self
-            .db
-            .serializer()
-            .get_in_all(2, None)
-            .unwrap();
+        let index_spot = self.db.serializer().get_in_all(2, None).unwrap();
         let page = self.serializer().get_page(index_spot);
         self.index = HashDb::from_reader_and_heap(page, &[]);
     }

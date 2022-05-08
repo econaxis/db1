@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
-use std::ops::{RangeBounds};
+use std::ops::RangeBounds;
 
 use heap_writer::default_heap_writer;
 
@@ -74,10 +74,12 @@ impl<T: SuitableDataType> FromReader for TableBase<T> {
         assert_eq!(_heap.len(), 0);
         let chunk_header = ChunkHeader::from_reader_and_heap(&mut r, _heap);
 
-        let mut buf = read_to_vec(&mut r, (chunk_header.tot_len + chunk_header.heap_size) as usize);
+        let mut buf = read_to_vec(
+            &mut r,
+            (chunk_header.tot_len + chunk_header.heap_size) as usize,
+        );
         let (real_data, real_heap) = {
-            let (data_unchecked, heap_unchecked) =
-                buf.split_at_mut(chunk_header.tot_len as usize);
+            let (data_unchecked, heap_unchecked) = buf.split_at_mut(chunk_header.tot_len as usize);
             if chunk_header.compressed() {
                 (
                     compressor::decompress::<T>(data_unchecked),
@@ -254,7 +256,6 @@ impl<T: SuitableDataType> BasicTable<T> for TableBase<T> {
 
     // Get slice corresponding to a primary key range
     fn key_range(&self, range: Option<u64>) -> Vec<&T> {
-        
         if range.is_none() {
             return self.data.iter().collect();
         }

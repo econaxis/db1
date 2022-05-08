@@ -45,7 +45,6 @@ impl FromReader for Option<ChunkHeader> {
     fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
         assert_eq!(heap.len(), 0);
 
-
         let mut rc = ReadContainer::default();
         r.read_exact(slice_from_type(&mut rc)).ok()?;
         if rc.check_sequence != CH_CHECK_SEQUENCE {
@@ -121,7 +120,6 @@ impl Default for CHValue {
     }
 }
 
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MinKey {
     ty: u16,
@@ -145,7 +143,6 @@ impl MinKey {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ChunkHeaderIndex(pub BTreeMap<MinKey, CHValue>);
-
 
 impl Default for ChunkHeaderIndex {
     fn default() -> Self {
@@ -175,13 +172,14 @@ impl ChunkHeaderIndex {
         left.next()
     }
 
-
     pub fn push(&mut self, pos: u64, chunk_header: ChunkHeader) {
         // Check
         debug_assert!({
             let mut prev_limits = Vec::new();
             for i in self.0.iter().filter(|a| a.1.ch.ty == chunk_header.ty) {
-                assert!(prev_limits.iter().all(|a: &Range<u64>| !a.overlaps(&i.1.ch.limits)));
+                assert!(prev_limits
+                    .iter()
+                    .all(|a: &Range<u64>| !a.overlaps(&i.1.ch.limits)));
                 prev_limits.push(i.1.ch.limits.clone());
             }
             true
@@ -189,10 +187,13 @@ impl ChunkHeaderIndex {
 
         let min_value = chunk_header.limits.min.unwrap();
         let mk = MinKey::new(chunk_header.ty, min_value);
-        self.0.insert(mk, CHValue {
-            ch: chunk_header,
-            location: pos,
-        });
+        self.0.insert(
+            mk,
+            CHValue {
+                ch: chunk_header,
+                location: pos,
+            },
+        );
     }
     pub fn reset_limits(&mut self, ty: u64, old_min: u64, new_limit: Range<u64>) {
         let mk = MinKey::new(ty, old_min);
