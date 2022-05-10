@@ -313,6 +313,7 @@ impl TypedTable {
             }
         };
 
+        // If estimated flush size is >= 16000, then we should split page to avoid going over page size limit
         if page.serialized_len() >= 16000 {
             let old_min_limits = page.limits.min.unwrap();
             let newpage = page.split(&self.ty);
@@ -1337,12 +1338,12 @@ fn test_sql_c_api() {
                 .unwrap()
                 .as_ptr(),
         );
-        let q1 = "CREATE TABLE tbl1 (pkey INT, telephone INT, a STRING)".to_string();
-        let q2 = r#"INSERT INTO tbl1 VALUES (1, 90328023, "hello"), (2, 32084432, "world"), (3, 32084432, "world"), (4, 32084432, "world")"#.to_string();
-        let q3 = r#"SELECT pkey, a FROM tbl1 WHERE a EQUALS "world""#.to_string();
-        let q4 = "SELECT pkey, a FROM tbl1\0".to_string();
-        sql_exec(tb, q1.as_ptr() as *const c_char);
-        sql_exec(tb, q2.as_ptr() as *const c_char);
+        let q1 = CString::new("CREATE TABLE tbl1 (pkey INT, telephone INT, a STRING)").unwrap();
+        let q2 = CString::new(r#"INSERT INTO tbl1 VALUES (1, 90328023, "hello"), (2, 32084432, "world"), (3, 32084432, "world"), (4, 32084432, "world")"#).unwrap();
+        let q3 = CString::new(r#"SELECT pkey, a FROM tbl1 WHERE a EQUALS "world""#).unwrap();
+        let q4 = CString::new("SELECT pkey, a FROM tbl1").unwrap();
+        sql_exec(tb, q1.as_ptr());
+        sql_exec(tb, q2.as_ptr());
         println!(
             "{}",
             CStr::from_ptr(sql_exec(tb, q3.as_ptr() as *const c_char))

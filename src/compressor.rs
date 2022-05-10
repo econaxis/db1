@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use crate::SuitableDataType;
 
 fn shuffle_bytes(bytes: &[u8], type_len: usize) -> Vec<u8> {
@@ -64,6 +66,7 @@ pub fn decompress<T: SuitableDataType>(bytes: &[u8]) -> Vec<u8> {
 }
 
 #[test]
+#[ignore]
 fn test_reassembly_works() {
     let rand_str: String =
         " fdsafd;salkf dsa08hf d [sahdsa;ofjs afdhsa [ufdsafd;sa fkdsa ;flsaj ;dlka jfdsa"

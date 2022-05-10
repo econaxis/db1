@@ -333,7 +333,7 @@ impl FromReader for TableBase2 {
         let mut data = vec![0u8; data_size as usize];
         let mut heap = vec![0u8; heap_size as usize];
 
-        // why is this even here??
+        // Make capacity at least 16000 (as that is estimated page size)
         data.reserve(data.len().saturating_sub(16000));
         heap.reserve(heap.len().saturating_sub(16000));
 

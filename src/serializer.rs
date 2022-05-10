@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::ops::RangeBounds;
+use std::ops::{Deref, DerefMut, RangeBounds};
 use std::option::Option::None;
 
 use chunk_header::ChunkHeaderIndex;
@@ -241,13 +241,14 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
         self.pinned.insert(p);
 
         let file = &mut self.file;
-        self.cache.entry(p).or_insert_with(|| {
+        let table = self.cache.entry(p).or_insert_with(|| {
             let page_reader = Self::file_get_page(file, p);
             println!("Location: {p}, len: {}", page_reader.1);
             let mut page = TableBase2::from_reader_and_heap(page_reader, &[]);
             page.loaded_location = Some(p);
             page
-        })
+        });
+        table
     }
     pub fn file_get_page(file: &mut W, position: u64) -> LimitedReader<&mut W> {
         match PageSerializer::<W>::page_checked(file, Some(position)) {
@@ -286,14 +287,17 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
         if self.file.stream_len().unwrap() == 0 {
             return;
         }
-        for i in &self.previous_headers.0.clone() {
-            self.load_page_cached(i.1.location);
-        }
+        // Not sure why we're loading all the pages and unloading them here...
+        // for i in &self.previous_headers.0.clone() {
+        //     self.load_page_cached(i.1.location);
+        //     self.unpin_page(i.1.location);
+        // }
 
         let keys: Vec<_> = self.cache.keys().cloned().collect();
         for i in keys {
             self.unload_page(i);
         }
+        assert!(self.pinned.is_empty());
         self.file.flush().unwrap();
     }
     pub fn unpin_page(&mut self, page: u64) {
@@ -367,6 +371,7 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
 
 impl<W: Read + Write + Seek> Drop for PageSerializer<W> {
     fn drop(&mut self) {
+        assert!(self.pinned.is_empty(), "Failed to unpin pages: {:?}", self.pinned);
         // self.unload_all()
     }
 }
