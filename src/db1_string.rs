@@ -14,9 +14,6 @@ pub enum Db1String {
 
     // Owned byte array
     Resolvedo(Vec<u8>),
-
-    // Pointer + length to memory location
-    Ptr(*const u8, u64),
 }
 
 impl From<(*const c_char, u64)> for Db1String {
@@ -54,11 +51,6 @@ impl Debug for Db1String {
             Self::Unresolved(a, b) => {
                 f.write_fmt(format_args!("Document unknown ind {} len {}", *a, *b))
             }
-            Self::Ptr(ptr, len) => {
-                let slice = unsafe { std::slice::from_raw_parts(*ptr, *len as usize) };
-                let str = std::str::from_utf8(slice);
-                f.write_fmt(format_args!("Db1 {:?}", str))
-            }
         }
     }
 }
@@ -81,7 +73,6 @@ impl Db1String {
     pub fn as_buffer(&self) -> &[u8] {
         match self {
             Self::Resolvedo(s) => s,
-            Self::Ptr(ptr, len) => unsafe { std::slice::from_raw_parts(*ptr, *len as usize) },
             _ => panic!(),
         }
     }
@@ -95,42 +86,17 @@ impl Db1String {
         match self {
             Self::Resolvedo(a) => (a.as_ptr(), a.len() as u64),
             Self::Unresolved(_, _) => (std::ptr::null(), 0),
-            Self::Ptr(ptr, len) => (*ptr, *len),
-        }
-    }
-    pub fn owned(&mut self) {
-        match self {
-            Self::Ptr(ptr, len) => {
-                let slice = unsafe { std::slice::from_raw_parts(*ptr, *len as usize) };
-                let vec = slice.to_vec();
-                *self = Self::Resolvedo(vec);
-            }
-            _ => {}
         }
     }
     pub fn resolve_item(&mut self, heap: &[u8]) {
         match self {
-            Self::Resolvedo(_v) => {
-                panic!("Shouldn't happen")
-            }
             Self::Resolvedo(_v) => {}
             Self::Unresolved(ind, len) => {
                 *self = Self::Resolvedo(heap[*ind as usize..(*ind + *len) as usize].to_vec())
             }
-            Self::Ptr(..) => {}
         }
     }
 
-    pub fn read_to_ptr(data: impl Read, heap: &[u8]) -> Self {
-        let mut s = Self::from_reader_and_heap(data, heap);
-        match s {
-            Db1String::Unresolved(loc, len) => {
-                s = Db1String::Ptr(heap[loc as usize..].as_ptr(), len);
-            }
-            _ => panic!(),
-        }
-        s
-    }
 }
 
 impl From<String> for Db1String {

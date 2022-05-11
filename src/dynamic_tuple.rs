@@ -66,14 +66,6 @@ pub struct TupleBuilder {
 }
 
 impl TupleBuilder {
-    pub fn owned(&mut self) {
-        for f in &mut self.fields {
-            match f {
-                TypeData::String(str) => str.owned(),
-                _ => {}
-            }
-        }
-    }
     pub fn first(&self) -> u64 {
         match &self.fields[0] {
             TypeData::Int(i) => *i,
@@ -168,7 +160,7 @@ impl DynamicTuple {
                     }
                 }
                 Type::String => {
-                    let mut data = Db1String::read_to_ptr(&mut slice, heap);
+                    let mut data = Db1String::from_reader_and_heap(&mut slice, heap);
                     if fully_load {
                         data.resolve_item(heap);
                         answer.push(TypeData::String(data));

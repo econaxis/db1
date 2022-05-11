@@ -22,10 +22,6 @@ impl<'a, W: RWS> QueryData<'a, W> {
         }
     }
     pub fn results(mut self) -> Vec<TupleBuilder> {
-        for tuple in &mut self.results {
-            tuple.owned();
-        }
-
         for page in std::mem::take(&mut self.accessed_pages) {
             self.ps.unpin_page(page);
         }
