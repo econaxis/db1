@@ -177,7 +177,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> ManagerFns<T, Writer> {
         }
 
         let mut loads = 0;
-        let ok_chunks = os.get_in_all(1, Some(id));
+        let ok_chunks: Vec<_> = os.get_in_all(1, Some(id)).collect();
         for pos in ok_chunks {
             let db = Self::load_page(os, bp, pos);
             loads += 1;
@@ -217,7 +217,7 @@ impl<T: SuitableDataType, Writer: Write + Seek + Read> ManagerFns<T, Writer> {
         range: Option<u64>,
         load_mask: u8,
     ) -> Vec<T> {
-        let ok_chunks = output_stream.get_in_all(1, range);
+        let ok_chunks: Vec<_> = output_stream.get_in_all(1, range).collect();
         let mut cln = HashMap::new();
         for pos in ok_chunks {
             let db = Self::load_page(output_stream, bp, pos);

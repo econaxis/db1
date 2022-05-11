@@ -315,7 +315,7 @@ impl<W: Write + Seek + Read> ImageDb<W> {
     }
 
     pub fn load_index(&mut self) {
-        let index_spot = self.db.serializer().get_in_all(2, None).unwrap();
+        let index_spot = self.db.serializer().get_in_all(2, None).next().unwrap();
         let page = self.serializer().get_page(index_spot);
         self.index = HashDb::from_reader_and_heap(page, &[]);
     }

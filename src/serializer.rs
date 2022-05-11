@@ -43,6 +43,7 @@ pub struct PageData<'a, W> {
     len: u64,
     nextpos: u64,
 }
+
 impl<'a, W> PageData<'a, W> {
     fn stream_pos(&self) -> u64 {
         self.pos + self.len
@@ -223,7 +224,7 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
         }
     }
     pub fn load_page_cached(&mut self, p: u64) -> &mut TableBase2 {
-        const BPOOLSIZE: usize = 5000;
+        const BPOOLSIZE: usize = 5;
         if self.cache.len() >= BPOOLSIZE {
             let mut unload_count = self.cache.len() - BPOOLSIZE;
             let keys: Vec<_> = self.cache.keys().cloned().collect();
@@ -269,8 +270,8 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
     }
 
     pub fn move_file(&mut self) -> W
-    where
-        W: Default,
+        where
+            W: Default,
     {
         self.unload_all();
         self.previous_headers.0.clear();
@@ -305,7 +306,7 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
     }
 
     pub fn get_in_all_insert(&self, ty: u64, pkey: u64) -> Option<u64> {
-        let left = self.previous_headers.get_in_one(ty, pkey);
+        let left = self.previous_headers.get_in_one_it(ty, pkey).next();
 
         left.map(|a| a.1.location)
     }
@@ -355,17 +356,16 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
         Self::file_get_page(&mut self.file, position)
     }
 
-    pub fn get_in_all(&self, ty: u64, r: Option<u64>) -> Option<u64> {
-        let l = self.previous_headers.get_in_one(ty, r.unwrap_or(u64::MAX));
-        if let Some((_, ch)) = l {
+    pub fn get_in_all(&self, ty: u64, r: Option<u64>) -> impl Iterator<Item=u64> + '_ {
+        let candidate_pages = self.previous_headers.get_in_one_it(ty, r.unwrap_or(u64::MAX));
+        candidate_pages.filter_map(move |x| {
+            let ch = x.1;
             if r.is_some() && !ch.ch.limits.overlaps(&(r.unwrap()..=r.unwrap())) {
                 None
             } else {
                 Some(ch.location)
             }
-        } else {
-            None
-        }
+        })
     }
 }
 
@@ -399,7 +399,6 @@ fn serializer_works() {
     let mut f = std::mem::take(&mut ps.file);
     f.set_position(0);
     let ps1 = PageSerializer::create_from_reader(f, None);
-    dbg!(ps1.get_in_all(0, None));
     dbg!(&ps1.previous_headers);
 }
 
@@ -424,10 +423,10 @@ fn delete_works() {
         },
     );
 
-    assert_eq!(ps.get_in_all(0, Some(3)), Some(loc));
+    assert_eq!(ps.get_in_all(0, Some(3)).next(), Some(loc));
     ps.free_page(0, 3);
-    assert_eq!(ps.get_in_all(0, Some(3)), None);
+    assert_eq!(ps.get_in_all(0, Some(3)).next(), None);
 
     let ps1 = PageSerializer::create_from_reader(std::mem::take(&mut ps.file), None);
-    assert_eq!(ps1.get_in_all(0, Some(3)), None);
+    assert_eq!(ps1.get_in_all(0, Some(3)).next(), None);
 }

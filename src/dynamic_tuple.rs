@@ -251,7 +251,48 @@ struct TypedTable {
 
 pub trait RWS = Read + Write + Seek;
 
+struct TableCursor<'a, 'b, W: RWS> {
+    locations: Vec<u64>,
+    ps: &'a mut PageSerializer<W>,
+    ty: &'b DynamicTuple,
+    current_index: usize,
+}
+
+impl<W: RWS> TableCursor<'_, '_, W> {
+    fn next(&mut self) -> Option<Vec<TupleBuilder>> {
+        let location = self.locations.last()?;
+        let table = self.ps.load_page_cached(*location);
+
+        if self.current_index >= table.len() as usize {
+            // Go to next location in list
+            self.current_index = 0;
+            // Unpin the current page
+            self.ps.unpin_page(*location);
+
+            self.locations.pop();
+
+            return self.next();
+        } else {
+            let bytes = table.load_index(self.current_index);
+            self.current_index += 1;
+            let tuple = self
+                .ty
+                .read_tuple(bytes, u64::MAX, table.heap().get_ref());
+            Some(vec![tuple])
+        }
+    }
+}
+
 impl TypedTable {
+    fn get_in_all_iter<'a, W: RWS>(&self, ps: &'a mut PageSerializer<W>) -> TableCursor<'a, '_, W> {
+        let location_iter = Box::new(ps.get_in_all(self.id_ty, None));
+        TableCursor {
+            locations: location_iter.collect(),
+            ps,
+            ty: &self.ty,
+            current_index: 0,
+        }
+    }
     fn get_in_all<'a, W: RWS>(
         &self,
         pkey: u64,
@@ -259,7 +300,8 @@ impl TypedTable {
         ps: &'a mut PageSerializer<W>,
     ) -> QueryData<'a, W> {
         let mut answer = Vec::new();
-        let pages = ps.get_in_all(self.id_ty, Some(pkey));
+        let pages: Vec<_> = ps.get_in_all(self.id_ty, Some(pkey)).collect();
+        assert!(pages.len() <= 1, "Pages length not 1! {:?}", pages);
         for location in &pages {
             let table = ps.load_page_cached(*location);
             for bytes in table.search_value(pkey) {
@@ -273,7 +315,7 @@ impl TypedTable {
     }
 
     fn exists_in_page_serializer(&self, ps: &PageSerializer<impl RWS>) -> bool {
-        ps.get_in_all(self.id_ty, None).is_some()
+        ps.get_in_all(self.id_ty, None).next().is_some()
     }
 
     fn get_all<'a, W: RWS>(
@@ -282,7 +324,7 @@ impl TypedTable {
         ps: &'a mut PageSerializer<W>,
     ) -> QueryData<'a, W> {
         let mut answer = Vec::new();
-        let pages = ps.get_in_all(self.id_ty, None);
+        let pages: Vec<_> = ps.get_in_all(self.id_ty, None).collect();
         for location in &pages {
             let table = ps.load_page_cached(*location);
             for i in 0..table.len() {
@@ -692,6 +734,31 @@ fn insert_values() {
     );
 }
 
+
+#[test]
+fn typed_table_cursors() {
+    let mut ps = PageSerializer::default();
+    let tt = TypedTable::new(
+        DynamicTuple::new(vec![Type::Int, Type::String, Type::String]),
+        10,
+        &mut ps,
+        vec!["id", "name", "content"],
+    );
+
+    let mut i =0;
+    while ps.get_in_all(tt.id_ty, None).count() < 10 {
+        i += 1;
+        let tb = TupleBuilder::default()
+            .add_int(i)
+            .add_string(format!("hello{i}"))
+            .add_string(format!("world{i}"));
+        tt.store_raw(tb, &mut ps);
+    }
+    let mut cursor = tt.get_in_all_iter(&mut ps);
+    while let Some(x) = cursor.next() {
+        dbg!(x);
+    }
+}
 #[test]
 fn typed_table_test() {
     let mut ps = PageSerializer::default();
@@ -738,7 +805,12 @@ fn typed_table_test() {
                 .add_string(format!("tb1{i}"))]
         );
     }
+    let mut cursor = tt1.get_in_all_iter(&mut ps);
+    while let Some(x) = cursor.next() {
+        dbg!(x);
+    }
 }
+
 
 #[test]
 fn onehundred_typed_tables() {
@@ -972,15 +1044,15 @@ fn test_sql_all() {
         &mut nt,
         &mut ps,
     )
-    .unwrap()
-    .results();
+        .unwrap()
+        .results();
     let answer2 = parse_lex_sql(
         r#"SELECT id, fax FROM tbl1 WHERE fax EQUALS 3209324830294 "#,
         &mut nt,
         &mut ps,
     )
-    .unwrap()
-    .results();
+        .unwrap()
+        .results();
     dbg!(&answer1, &answer2);
 
     let mut ps = PageSerializer::create_from_reader(ps.move_file(), Some(16000));
@@ -989,20 +1061,20 @@ fn test_sql_all() {
         parse_lex_sql(
             r#"SELECT id, name, telephone FROM tbl WHERE id EQUALS 4 "#,
             &mut nt,
-            &mut ps
+            &mut ps,
         )
-        .unwrap()
-        .results(),
+            .unwrap()
+            .results(),
         answer1
     );
     assert_eq!(
         parse_lex_sql(
             r#"SELECT id, fax FROM tbl1 WHERE fax EQUALS 3209324830294 "#,
             &mut nt,
-            &mut ps
+            &mut ps,
         )
-        .unwrap()
-        .results(),
+            .unwrap()
+            .results(),
         answer2
     );
 }

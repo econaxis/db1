@@ -304,6 +304,7 @@ impl TableBase2 {
         self.dirty = false;
         new_pos
     }
+
     pub fn search_value(&self, value: u64) -> Vec<&[u8]> {
         let mut ans = Vec::new();
         if let Some(mut location) = self.binary_search(value) {
@@ -372,7 +373,7 @@ fn works() {
 
     db.force_flush(&mut ps);
 
-    let page = ps.get_in_all(19, None).unwrap();
+    let page = ps.get_in_all(19, None).next().unwrap();
     let page = ps.get_page(page);
 
     let db1 = TableBase2::from_reader_and_heap(page, &[]);
@@ -409,7 +410,7 @@ fn works() {
     f.set_position(0);
 
     let ps1 = PageSerializer::create_from_reader(f, None);
-    assert!(ps1.get_in_all(19, None).is_some());
+    assert!(ps1.get_in_all(19, None).next().is_some());
 }
 
 #[test]

@@ -11,12 +11,13 @@ pub struct QueryData<'a, W: RWS> {
 impl<'a, W: RWS> QueryData<'a, W> {
     pub fn new(
         results: Vec<TupleBuilder>,
-        accessed_pages: Option<u64>,
+        accessed_pages: Vec<u64>,
         ps: &'a mut PageSerializer<W>,
     ) -> Self {
+        assert!(accessed_pages.len() <= 1);
         Self {
             results,
-            accessed_pages,
+            accessed_pages: accessed_pages.first().copied(),
             ps,
         }
     }
