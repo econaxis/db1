@@ -181,24 +181,6 @@ impl DynamicTuple {
         TupleBuilder { fields: answer }
     }
 
-    pub fn read_tuple_bytes(&self, a: &[u8], heap: &mut Heap) -> TupleBuilder {
-        let mut slice = Cursor::new(a);
-        let mut answer = Vec::new();
-        for t in &self.fields {
-            match t {
-                Type::Int => {
-                    answer.push(TypeData::Int(u64::from_le_bytes(read_to_buf(&mut slice))));
-                }
-                Type::String => {
-                    let mut db1 = Db1String::from_reader_and_heap(&mut slice, heap.as_slice());
-
-                    db1.resolve_item(heap.as_slice());
-                    answer.push(TypeData::String(db1));
-                }
-            }
-        }
-        TupleBuilder { fields: answer }
-    }
 }
 
 // #[test]
