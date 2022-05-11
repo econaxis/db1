@@ -9,15 +9,20 @@ use crate::{BytesSerialize, FromReader};
 #[derive(Clone, Eq)]
 #[repr(C)]
 pub enum Db1String {
+    // Offset + length to heap array
     Unresolved(u64, u64),
-    Resolvedo(Vec<u8>, bool),
+
+    // Owned byte array
+    Resolvedo(Vec<u8>),
+
+    // Pointer + length to memory location
     Ptr(*const u8, u64),
 }
 
 impl From<(*const c_char, u64)> for Db1String {
     fn from((ptr, len): (*const c_char, u64)) -> Self {
         let vec = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) }.to_vec();
-        Self::Resolvedo(vec, false)
+        Self::Resolvedo(vec)
     }
 }
 
@@ -29,7 +34,7 @@ impl PartialEq<&str> for Db1String {
 
 impl Hash for Db1String {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        if let Self::Resolvedo(v, _) = self {
+        if let Self::Resolvedo(v) = self {
             v.hash(state)
         } else {
             panic!()
@@ -40,12 +45,12 @@ impl Hash for Db1String {
 impl Debug for Db1String {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Resolvedo(v, _) if v.len() >= 100 => f.write_str("Db1string over 100"),
-            Self::Resolvedo(v, _) if !v.is_empty() => f.write_fmt(format_args!(
+            Self::Resolvedo(v) if v.len() >= 100 => f.write_str("Db1string over 100"),
+            Self::Resolvedo(v) if !v.is_empty() => f.write_fmt(format_args!(
                 "db1\"{}\"",
                 std::str::from_utf8(v).unwrap_or("non-utf8")
             )),
-            Self::Resolvedo(_v, _) => f.write_fmt(format_args!("Empty Document")),
+            Self::Resolvedo(_v) => f.write_fmt(format_args!("Empty Document")),
             Self::Unresolved(a, b) => {
                 f.write_fmt(format_args!("Document unknown ind {} len {}", *a, *b))
             }
@@ -66,7 +71,7 @@ impl PartialEq for Db1String {
 
 impl Default for Db1String {
     fn default() -> Self {
-        Self::Resolvedo(Default::default(), false)
+        Self::Resolvedo(Default::default())
     }
 }
 
@@ -75,7 +80,7 @@ impl Db1String {
     const STRING_CHECK_SEQ: u8 = 0xa7;
     pub fn as_buffer(&self) -> &[u8] {
         match self {
-            Self::Resolvedo(s, _) => s,
+            Self::Resolvedo(s) => s,
             Self::Ptr(ptr, len) => unsafe { std::slice::from_raw_parts(*ptr, *len as usize) },
             _ => panic!(),
         }
@@ -88,7 +93,7 @@ impl Db1String {
     }
     pub fn as_ptr_allow_unresolved(&self) -> (*const u8, u64) {
         match self {
-            Self::Resolvedo(a, _) => (a.as_ptr(), a.len() as u64),
+            Self::Resolvedo(a) => (a.as_ptr(), a.len() as u64),
             Self::Unresolved(_, _) => (std::ptr::null(), 0),
             Self::Ptr(ptr, len) => (*ptr, *len),
         }
@@ -98,19 +103,19 @@ impl Db1String {
             Self::Ptr(ptr, len) => {
                 let slice = unsafe { std::slice::from_raw_parts(*ptr, *len as usize) };
                 let vec = slice.to_vec();
-                *self = Self::Resolvedo(vec, false);
+                *self = Self::Resolvedo(vec);
             }
             _ => {}
         }
     }
     pub fn resolve_item(&mut self, heap: &[u8]) {
         match self {
-            Self::Resolvedo(_v, true) => {
+            Self::Resolvedo(_v) => {
                 panic!("Shouldn't happen")
             }
-            Self::Resolvedo(_v, false) => {}
+            Self::Resolvedo(_v) => {}
             Self::Unresolved(ind, len) => {
-                *self = Self::Resolvedo(heap[*ind as usize..(*ind + *len) as usize].to_vec(), true)
+                *self = Self::Resolvedo(heap[*ind as usize..(*ind + *len) as usize].to_vec())
             }
             Self::Ptr(..) => {}
         }
@@ -130,7 +135,7 @@ impl Db1String {
 
 impl From<String> for Db1String {
     fn from(s: String) -> Self {
-        Self::Resolvedo(s.into_bytes(), false)
+        Self::Resolvedo(s.into_bytes())
     }
 }
 
@@ -142,7 +147,7 @@ impl<'a> From<&'a str> for Db1String {
 
 impl From<Vec<u8>> for Db1String {
     fn from(s: Vec<u8>) -> Self {
-        Self::Resolvedo(s, false)
+        Self::Resolvedo(s)
     }
 }
 
