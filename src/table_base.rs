@@ -205,7 +205,7 @@ impl<T: SuitableDataType> BasicTable<T> for TableBase<T> {
         if let Some(found) = self.data.iter_mut().find(|x| x.first() == t.first()) {
             Some(std::mem::replace(found, t))
         } else {
-            debug_assert!(self.data.iter().find(|x| x.first() == t.first()).is_none());
+            debug_assert!(!self.data.iter().any(|x| x.first() == t.first()));
             self.limits.add(t.first());
             self.data.push(t);
             self.is_sorted = false;

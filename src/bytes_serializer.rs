@@ -20,7 +20,7 @@ pub trait BytesSerialize: Sized {
 #[macro_export]
 macro_rules! from_reader {
     ($x: ty) => {
-        impl crate::bytes_serializer::FromReader for $x {
+        impl $crate::bytes_serializer::FromReader for $x {
             fn from_reader_and_heap<R: Read>(mut r: R, _data: &[u8]) -> Self {
                 let mut buffer = [0u8; std::mem::size_of::<$x>()];
                 r.read_exact(&mut buffer).unwrap();

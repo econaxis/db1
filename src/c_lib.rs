@@ -5,11 +5,10 @@
 #![allow(unused_unsafe)]
 #![feature(trait_alias)]
 #![feature(seek_stream_len)]
-#![feature(termination_trait_lib)]
 #![feature(test)]
 #![feature(entry_insert)]
 #![feature(write_all_vectored)]
-
+#![allow(clippy::derive_hash_xor_eq)]
 extern crate core;
 extern crate rand;
 extern crate test;
@@ -52,7 +51,7 @@ mod table_traits;
 mod tests;
 
 #[repr(C)]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq)]
 pub struct Document {
     pub id: u32,
     pub name: Db1String,
@@ -71,6 +70,11 @@ impl Hash for Document {
     }
 }
 
+impl PartialEq for Document {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
 impl PartialEq<u64> for Document {
     fn eq(&self, other: &u64) -> bool {
         self.hash().eq(other)

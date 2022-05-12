@@ -96,7 +96,6 @@ impl Db1String {
             }
         }
     }
-
 }
 
 impl From<String> for Db1String {

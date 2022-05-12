@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::io::{Read, Seek, Write};
-use std::iter::Rev;
+
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
 use crate::range::Range;
@@ -164,7 +164,7 @@ impl ChunkHeaderIndex {
 
     pub fn get_in_one_it(&self, ty: u64, pkey: u64) -> impl Iterator<Item = (&MinKey, &CHValue)> {
         let mk = MinKey::new(ty, pkey);
-        let mut left = self.0.range(mk.start_ty()..=mk).rev();
+        let left = self.0.range(mk.start_ty()..=mk).rev();
         left
     }
     pub fn get_in_one_mut(&mut self, ty: u64, pkey: u64) -> Option<(&'_ MinKey, &'_ mut CHValue)> {

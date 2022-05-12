@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::ops::{Deref, DerefMut, RangeBounds};
 use std::option::Option::None;
 
 use chunk_header::ChunkHeaderIndex;
@@ -42,12 +41,6 @@ pub struct PageData<'a, W> {
     pos: u64,
     len: u64,
     nextpos: u64,
-}
-
-impl<'a, W> PageData<'a, W> {
-    fn stream_pos(&self) -> u64 {
-        self.pos + self.len
-    }
 }
 
 impl<'a, W> Debug for PageData<'a, W> {
@@ -213,7 +206,7 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
     pub fn create(mut w: W, constant_size: Option<u64>) -> Self {
         w.seek(SeekFrom::Start(0)).unwrap();
 
-        w.write(&Self::CHECK_SEQ.to_le_bytes()).unwrap();
+        w.write_all(&Self::CHECK_SEQ.to_le_bytes()).unwrap();
         Self {
             deleted: Vec::new(),
             file: w,
@@ -270,8 +263,8 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
     }
 
     pub fn move_file(&mut self) -> W
-        where
-            W: Default,
+    where
+        W: Default,
     {
         self.unload_all();
         self.previous_headers.0.clear();
@@ -340,10 +333,10 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
         };
         println!("Putting page to pos {new_pos}");
         self.file
-            .write(&PageSerializer::<W>::WORKING_PAGE.to_le_bytes())
+            .write_all(&PageSerializer::<W>::WORKING_PAGE.to_le_bytes())
             .unwrap();
         self.file
-            .write(&(self.constant_size.unwrap_or(size) as u32).to_le_bytes())
+            .write_all(&(self.constant_size.unwrap_or(size) as u32).to_le_bytes())
             .unwrap();
         self.file.write_all(&buf).unwrap();
 
@@ -356,8 +349,10 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
         Self::file_get_page(&mut self.file, position)
     }
 
-    pub fn get_in_all(&self, ty: u64, r: Option<u64>) -> impl Iterator<Item=u64> + '_ {
-        let candidate_pages = self.previous_headers.get_in_one_it(ty, r.unwrap_or(u64::MAX));
+    pub fn get_in_all(&self, ty: u64, r: Option<u64>) -> impl Iterator<Item = u64> + '_ {
+        let candidate_pages = self
+            .previous_headers
+            .get_in_one_it(ty, r.unwrap_or(u64::MAX));
         candidate_pages.filter_map(move |x| {
             let ch = x.1;
             if r.is_some() && !ch.ch.limits.overlaps(&(r.unwrap()..=r.unwrap())) {
@@ -371,7 +366,11 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
 
 impl<W: Read + Write + Seek> Drop for PageSerializer<W> {
     fn drop(&mut self) {
-        assert!(self.pinned.is_empty(), "Failed to unpin pages: {:?}", self.pinned);
+        assert!(
+            self.pinned.is_empty(),
+            "Failed to unpin pages: {:?}",
+            self.pinned
+        );
         // self.unload_all()
     }
 }

@@ -5,13 +5,19 @@ use std::io::Read;
 use crate::bytes_serializer::{BytesSerialize, FromReader};
 use crate::from_reader;
 
-#[derive(Clone, Default, PartialEq)]
+#[derive(Clone, Default)]
 #[repr(C)]
 pub struct DataType(pub u8, pub u8, pub u8);
 
 impl Hash for DataType {
     fn hash<H: Hasher>(&self, state: &mut H) {
         (self.0 as u64).hash(state)
+    }
+}
+
+impl PartialEq for DataType {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
     }
 }
 

@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
-use std::fmt::{format, Debug, Write as OW};
+use std::fmt::{Debug, Write as OW};
 use std::fs::File;
 use std::io::{Cursor, Read, Seek, Write};
 use std::option::Option::None;
@@ -14,7 +14,7 @@ use dynamic_tuple::TypeData::Null;
 use gen_suitable_data_type_impls;
 use serializer::PageSerializer;
 use table_base::read_to_buf;
-use table_base2::{Heap, TableBase2};
+use table_base2::{TableBase2};
 use FromReader;
 use {BytesSerialize, SuitableDataType};
 
@@ -172,7 +172,6 @@ impl DynamicTuple {
         }
         TupleBuilder { fields: answer }
     }
-
 }
 
 // #[test]
@@ -245,13 +244,11 @@ impl<W: RWS> TableCursor<'_, '_, W> {
 
             self.locations.pop();
 
-            return self.next();
+            self.next()
         } else {
             let bytes = table.load_index(self.current_index);
             self.current_index += 1;
-            let tuple = self
-                .ty
-                .read_tuple(bytes, u64::MAX, table.heap().get_ref());
+            let tuple = self.ty.read_tuple(bytes, u64::MAX, table.heap().get_ref());
             Some(vec![tuple])
         }
     }
@@ -286,10 +283,6 @@ impl TypedTable {
             }
         }
         QueryData::new(answer, pages, ps)
-    }
-
-    fn exists_in_page_serializer(&self, ps: &PageSerializer<impl RWS>) -> bool {
-        ps.get_in_all(self.id_ty, None).next().is_some()
     }
 
     fn get_all<'a, W: RWS>(
@@ -708,7 +701,6 @@ fn insert_values() {
     );
 }
 
-
 #[test]
 fn typed_table_cursors() {
     let mut ps = PageSerializer::default();
@@ -719,7 +711,7 @@ fn typed_table_cursors() {
         vec!["id", "name", "content"],
     );
 
-    let mut i =0;
+    let mut i = 0;
     while ps.get_in_all(tt.id_ty, None).count() < 10 {
         i += 1;
         let tb = TupleBuilder::default()
@@ -784,7 +776,6 @@ fn typed_table_test() {
         dbg!(x);
     }
 }
-
 
 #[test]
 fn onehundred_typed_tables() {
@@ -1018,15 +1009,15 @@ fn test_sql_all() {
         &mut nt,
         &mut ps,
     )
-        .unwrap()
-        .results();
+    .unwrap()
+    .results();
     let answer2 = parse_lex_sql(
         r#"SELECT id, fax FROM tbl1 WHERE fax EQUALS 3209324830294 "#,
         &mut nt,
         &mut ps,
     )
-        .unwrap()
-        .results();
+    .unwrap()
+    .results();
     dbg!(&answer1, &answer2);
 
     let mut ps = PageSerializer::create_from_reader(ps.move_file(), Some(16000));
@@ -1037,8 +1028,8 @@ fn test_sql_all() {
             &mut nt,
             &mut ps,
         )
-            .unwrap()
-            .results(),
+        .unwrap()
+        .results(),
         answer1
     );
     assert_eq!(
@@ -1047,8 +1038,8 @@ fn test_sql_all() {
             &mut nt,
             &mut ps,
         )
-            .unwrap()
-            .results(),
+        .unwrap()
+        .results(),
         answer2
     );
 }
@@ -1074,10 +1065,10 @@ fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
         &mut ps,
     );
 
-    let mut indices: Vec<u64> = (0..1_000_00).collect();
+    let mut indices: Vec<u64> = (0..100_000).collect();
     indices.shuffle(&mut thread_rng());
     let mut j = indices.iter().cycle();
-    for _ in 0..1_000_00 {
+    for _ in 0..100_000 {
         let j = *j.next().unwrap();
         let i = j + 10;
         parse_lex_sql(

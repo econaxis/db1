@@ -8,7 +8,7 @@ use std::ops::Range as stdRange;
 
 use serializer::PageSerializer;
 
-use crate::index::ImageDocument;
+
 use crate::suitable_data_type::DataType;
 use crate::*;
 
@@ -282,6 +282,7 @@ fn test2() {
     assert_eq!(db1.get_in_all(None, u8::MAX), &ans);
 }
 use rand::SeedableRng;
+use index::ImageDocument;
 thread_local! {
     // pub static RAND: RefCell<ChaCha20Rng> = RefCell::new(ChaCha20Rng::from_entropy());
     pub static RAND: RefCell<rand_chacha::ChaCha20Rng> = RefCell::new(rand_chacha::ChaCha20Rng::seed_from_u64(1));

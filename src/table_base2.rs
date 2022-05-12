@@ -5,13 +5,13 @@ use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::option::Option::None;
 
-use db1_string::Db1String;
+
 use dynamic_tuple::RWS;
 use dynamic_tuple::{DynamicTuple, DynamicTupleInstance, TupleBuilder};
 use hash::InvalidWriter;
 use serializer::PageSerializer;
 use table_base::read_to_buf;
-use BytesSerialize;
+use ::{BytesSerialize, Db1String};
 use {ChunkHeader, Range};
 use {FromReader, SuitableDataType};
 
@@ -230,7 +230,9 @@ impl TableBase2 {
 
     pub fn split(&mut self, splitter: &DynamicTuple) -> Option<Self> {
         assert!(self.len() >= 2);
-        debug_assert!(self.assert_sorted().is_empty() || true);
+
+        // Not exactly sure what this is for
+        // debug_assert!(self.assert_sorted().is_empty() || true);
         // Split exactly at middle
         let middle = self.find_split_point(self.len() as usize / 2) * self.type_size;
 
