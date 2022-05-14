@@ -216,72 +216,114 @@ struct NamedTables {
 }
 
 #[derive(Clone, Debug)]
-struct TypedTable {
+pub struct TypedTable {
     ty: DynamicTuple,
-    id_ty: u64,
+    pub(crate) id_ty: u64,
     column_map: HashMap<String, u32>,
 }
 
 pub trait RWS = Read + Write + Seek;
 
-struct TableCursor<'a, 'b, W: RWS> {
+pub struct TableCursor<'a, 'b, W: RWS> {
     locations: Vec<u64>,
     ps: &'a mut PageSerializer<W>,
     ty: &'b DynamicTuple,
-    current_index: usize,
+    // current_tuples: Vec<TupleBuilder>,
+    current_index: u64,
+    end_index_exclusive: u64,
+    pkey: Option<u64>,
+    load_columns: u64,
 }
 
-impl<W: RWS> TableCursor<'_, '_, W> {
-    fn next(&mut self) -> Option<Vec<TupleBuilder>> {
-        let location = self.locations.last()?;
-        let table = self.ps.load_page_cached(*location);
+impl<'a, 'b, W: RWS> TableCursor<'a, 'b, W> {
+    fn new(locations: Vec<u64>, ps: &'a mut PageSerializer<W>, ty: &'b DynamicTuple, pkey: Option<u64>, load_columns: u64) -> Self {
+        let mut se = Self {
+            locations,
+            ps,
+            ty,
+            current_index: 0,
+            end_index_exclusive: 0,
+            pkey,
+            load_columns,
+        };
+        if !se.locations.is_empty() {
+            se.reset_index_iterator();
+        }
+        se
+    }
+    fn reset_index_iterator(&mut self) {
+        // Reload the index iterator for the new table
+        let table = self.ps.load_page_cached(*self.locations.last().unwrap());
+        let range = if let Some(pk) = self.pkey {
+            table.get_ranges(pk..=pk)
+        } else {
+            (0..table.len())
+        };
+        self.current_index = range.start;
+        self.end_index_exclusive = range.end;
+    }
+}
 
-        if self.current_index >= table.len() as usize {
-            // Go to next location in list
-            self.current_index = 0;
-            // Unpin the current page
-            self.ps.unpin_page(*location);
 
-            self.locations.pop();
+impl<W: RWS> Iterator for TableCursor<'_, '_, W> {
+    type Item = TupleBuilder;
 
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current_index < self.end_index_exclusive {
+            // Work on self.current_index
+            let location = self.locations.last()?;
+            let table = self.ps.load_page_cached(*location);
+
+            let bytes = table.load_index(self.current_index as usize);
+            let tuple = self.ty.read_tuple(bytes, self.load_columns, table.heap().get_ref());
+
+            self.current_index += 1;
+            Some(tuple)
+        } else if self.locations.len() > 1 {
+            // Unpin the current page and load the next page in
+            self.ps.unpin_page(self.locations.pop().unwrap());
+
+            self.reset_index_iterator();
             self.next()
         } else {
-            let bytes = table.load_index(self.current_index);
-            self.current_index += 1;
-            let tuple = self.ty.read_tuple(bytes, u64::MAX, table.heap().get_ref());
-            Some(vec![tuple])
+            None
         }
     }
 }
 
+
 impl TypedTable {
-    fn get_in_all_iter<'a, W: RWS>(&self, ps: &'a mut PageSerializer<W>) -> TableCursor<'a, '_, W> {
+    pub fn get_in_all_iter<'a, W: RWS>(&self, pkey: Option<u64>, load_columns: u64, ps: &'a mut PageSerializer<W>) -> TableCursor<'a, '_, W> {
         let location_iter = Box::new(ps.get_in_all(self.id_ty, None));
-        TableCursor {
-            locations: location_iter.collect(),
-            ps,
-            ty: &self.ty,
-            current_index: 0,
-        }
+        TableCursor::new(location_iter.rev().collect(), ps, &self.ty, pkey, load_columns)
     }
     fn get_in_all<'a, W: RWS>(
         &self,
-        pkey: u64,
+        pkey: Option<u64>,
         load_columns: u64,
         ps: &'a mut PageSerializer<W>,
     ) -> QueryData<'a, W> {
+        let mut test_answer: Vec<_> = self.get_in_all_iter(pkey, load_columns, ps).collect();
+
         let mut answer = Vec::new();
-        let pages: Vec<_> = ps.get_in_all(self.id_ty, Some(pkey)).collect();
-        assert!(pages.len() <= 1, "Pages length not 1! {:?}", pages);
+        let pages: Vec<_> = ps.get_in_all(self.id_ty, pkey).collect();
+        assert!(pkey.is_none() || pages.len() <= 1, "Pages length not 1! {:?}", pages);
         for location in &pages {
             let table = ps.load_page_cached(*location);
-            for bytes in table.search_value(pkey) {
+
+            let table_tuples = if let Some(pk) = pkey {
+                table.search_value(pk)
+            } else {
+                (0..table.len()).map(|ind| table.load_index(ind as usize)).collect()
+            };
+            for bytes in table_tuples {
                 let tuple = self
                     .ty
                     .read_tuple(bytes, load_columns, table.heap().get_ref());
                 answer.push(tuple);
             }
         }
+        assert_eq!(test_answer, answer);
         QueryData::new(answer, pages, ps)
     }
 
@@ -303,7 +345,7 @@ impl TypedTable {
         QueryData::new(answer, pages, ps)
     }
 
-    fn store_raw(&self, t: TupleBuilder, ps: &mut PageSerializer<impl RWS>) {
+    pub(crate) fn store_raw(&self, t: TupleBuilder, ps: &mut PageSerializer<impl RWS>) {
         assert!(t.type_check(&self.ty));
         let pkey = t.first();
         let (location, page) = match ps.get_in_all_insert(self.id_ty, pkey) {
@@ -338,7 +380,7 @@ impl TypedTable {
         ps.unpin_page(location);
     }
 
-    fn new<W: Write + Read + Seek>(
+    pub(crate) fn new<W: Write + Read + Seek>(
         ty: DynamicTuple,
         id: u64,
         _ps: &mut PageSerializer<W>,
@@ -720,11 +762,15 @@ fn typed_table_cursors() {
             .add_string(format!("world{i}"));
         tt.store_raw(tb, &mut ps);
     }
-    let mut cursor = tt.get_in_all_iter(&mut ps);
-    while let Some(x) = cursor.next() {
-        dbg!(x);
-    }
+    // Now test the iterator API
+    let result1 = tt.get_all(u64::MAX, &mut ps);
+    let mut result1 = result1.results();
+
+    let mut cursor = tt.get_in_all_iter(None, u64::MAX, &mut ps);
+    let mut cursor: Vec<_> = cursor.collect();
+    assert_eq!(result1, cursor);
 }
+
 #[test]
 fn typed_table_test() {
     let mut ps = PageSerializer::default();
@@ -756,7 +802,7 @@ fn typed_table_test() {
 
     for i in (30..=90).rev() {
         assert_eq!(
-            tt.get_in_all(i, 0, &mut ps).results(),
+            tt.get_in_all(Some(i), 0, &mut ps).results(),
             vec![TupleBuilder::default()
                 .add_int(i)
                 .add_string(format!("hello{i}"))
@@ -765,15 +811,11 @@ fn typed_table_test() {
             i
         );
         assert_eq!(
-            tt1.get_in_all(i, 0, &mut ps).results(),
+            tt1.get_in_all(Some(i), 0, &mut ps).results(),
             vec![TupleBuilder::default()
                 .add_int(i)
                 .add_string(format!("tb1{i}"))]
         );
-    }
-    let mut cursor = tt1.get_in_all_iter(&mut ps);
-    while let Some(x) = cursor.next() {
-        dbg!(x);
     }
 }
 
@@ -802,14 +844,14 @@ fn onehundred_typed_tables() {
     let mut ps1 = PageSerializer::create_from_reader(ps.file.clone(), None);
     for i in (0..2000).rev() {
         assert_eq!(
-            tables[i % 100].get_in_all(i as u64, 0, &mut ps).results(),
+            tables[i % 100].get_in_all(Some(i as u64), 0, &mut ps).results(),
             vec![TupleBuilder::default()
                 .add_int(i as u64)
                 .add_string(format!("hello{i}"))
                 .add_string(format!("world{i}"))]
         );
         assert_eq!(
-            tables[i % 100].get_in_all(i as u64, 0, &mut ps1).results(),
+            tables[i % 100].get_in_all(Some(i as u64), 0, &mut ps1).results(),
             vec![TupleBuilder::default()
                 .add_int(i as u64)
                 .add_string(format!("hello{i}"))
@@ -836,7 +878,7 @@ impl NamedTables {
         let schema = entry.get_mut();
         let mut large_id = 3;
 
-        for tup in schema.get_all(0, s).results().into_iter().rev() {
+        for tup in schema.get_in_all(None, 0, s).results().into_iter().rev() {
             let id = tup.extract_int(0);
             let table_name = std::str::from_utf8(tup.extract_string(1)).unwrap();
             let column_name = std::str::from_utf8(tup.extract_string(2)).unwrap();
@@ -933,9 +975,9 @@ impl NamedTables {
         match filter.first() {
             Some(Filter::Equals(colname, TypeData::Int(icomp))) => {
                 match table.column_map[colname] {
-                    0 => table.get_in_all(*icomp, col_mask, ps),
+                    0 => table.get_in_all(Some(*icomp), col_mask, ps),
                     colindex => {
-                        let mut query_result = table.get_all(col_mask, ps);
+                        let mut query_result = table.get_in_all(None, col_mask, ps);
 
                         query_result.filter(|i| match i.fields[colindex as usize] {
                             TypeData::Int(int) => int == *icomp,
@@ -947,14 +989,14 @@ impl NamedTables {
             }
             Some(Filter::Equals(colname, TypeData::String(s))) => {
                 let colindex = table.column_map[colname];
-                let mut qr = table.get_all(col_mask, ps);
+                let mut qr = table.get_in_all(None, col_mask, ps);
                 qr.filter(|i| match &i.fields[colindex as usize] {
                     TypeData::String(s1) => s1 == s,
                     _ => panic!(),
                 });
                 qr
             }
-            None | Some(Filter::Equals(_, Null)) => table.get_all(col_mask, ps),
+            None | Some(Filter::Equals(_, Null)) => table.get_in_all(None, col_mask, ps),
         }
     }
 }
@@ -1009,15 +1051,15 @@ fn test_sql_all() {
         &mut nt,
         &mut ps,
     )
-    .unwrap()
-    .results();
+        .unwrap()
+        .results();
     let answer2 = parse_lex_sql(
         r#"SELECT id, fax FROM tbl1 WHERE fax EQUALS 3209324830294 "#,
         &mut nt,
         &mut ps,
     )
-    .unwrap()
-    .results();
+        .unwrap()
+        .results();
     dbg!(&answer1, &answer2);
 
     let mut ps = PageSerializer::create_from_reader(ps.move_file(), Some(16000));
@@ -1028,8 +1070,8 @@ fn test_sql_all() {
             &mut nt,
             &mut ps,
         )
-        .unwrap()
-        .results(),
+            .unwrap()
+            .results(),
         answer1
     );
     assert_eq!(
@@ -1038,8 +1080,8 @@ fn test_sql_all() {
             &mut nt,
             &mut ps,
         )
-        .unwrap()
-        .results(),
+            .unwrap()
+            .results(),
         answer2
     );
 }
@@ -1406,7 +1448,8 @@ impl<W: RWS> DynamicTable<W> {
     }
 }
 
-// Dynamic tuples automatically take up 100 bytes
+// Dynamic tuples automatically take up 400 bytes
+// TODO: change TableBase2 insertion API to support `Write` interface to avoid malloc
 #[derive(Clone, Debug)]
 pub struct DynamicTupleInstance {
     pub data: [u8; 400],

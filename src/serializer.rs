@@ -299,7 +299,7 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
     }
 
     pub fn get_in_all_insert(&self, ty: u64, pkey: u64) -> Option<u64> {
-        let left = self.previous_headers.get_in_one_it(ty, pkey).next();
+        let left = self.previous_headers.get_in_one_it(ty, pkey).next_back();
 
         left.map(|a| a.1.location)
     }
@@ -349,10 +349,11 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
         Self::file_get_page(&mut self.file, position)
     }
 
-    pub fn get_in_all(&self, ty: u64, r: Option<u64>) -> impl Iterator<Item = u64> + '_ {
+    pub fn get_in_all(&self, ty: u64, r: Option<u64>) -> impl DoubleEndedIterator<Item = u64> + '_ {
         let candidate_pages = self
             .previous_headers
             .get_in_one_it(ty, r.unwrap_or(u64::MAX));
+
         candidate_pages.filter_map(move |x| {
             let ch = x.1;
             if r.is_some() && !ch.ch.limits.overlaps(&(r.unwrap()..=r.unwrap())) {
@@ -366,11 +367,11 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
 
 impl<W: Read + Write + Seek> Drop for PageSerializer<W> {
     fn drop(&mut self) {
-        assert!(
-            self.pinned.is_empty(),
-            "Failed to unpin pages: {:?}",
-            self.pinned
-        );
+        // assert!(
+        //     self.pinned.is_empty(),
+        //     "Failed to unpin pages: {:?}",
+        //     self.pinned
+        // );
         // self.unload_all()
     }
 }

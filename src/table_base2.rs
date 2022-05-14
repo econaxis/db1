@@ -1,12 +1,13 @@
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, Bound};
 use std::convert::TryInto;
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::ops::{RangeBounds, RangeInclusive};
 use std::option::Option::None;
 
 
-use dynamic_tuple::RWS;
+use dynamic_tuple::{RWS, Type};
 use dynamic_tuple::{DynamicTuple, DynamicTupleInstance, TupleBuilder};
 use hash::InvalidWriter;
 use serializer::PageSerializer;
@@ -39,6 +40,7 @@ impl Default for Heap {
         Self(Cursor::new(Vec::with_capacity(16000)), Default::default())
     }
 }
+
 impl Write for &mut Heap {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.0.write(buf)
@@ -153,41 +155,45 @@ impl TableBase2 {
     pub fn heap_size(&self) -> u64 {
         self.heap.len()
     }
-    pub fn binary_search(&self, a: u64) -> Option<u64> {
-        let len = self.len();
-        let mut left = 0;
-        let mut right = len;
-        loop {
-            let middle = (left + right) / 2;
-            if middle >= len {
-                return Some(middle);
-            }
-            match self.load_pkey(middle as usize * self.type_size).cmp(&a) {
-                Ordering::Less => {
-                    left = middle;
-                }
-                Ordering::Equal => {
-                    right = middle;
-                }
-                Ordering::Greater => {
-                    right = middle;
-                }
-            }
-            if (left as i64 - right as i64).abs() <= 1 {
-                return if self.load_pkey(left as usize * self.type_size) >= a {
-                    Some(left)
-                } else {
-                    Some(right)
-                };
-            }
+
+    fn lower_bound(&self, key: u64) -> u64 {
+        let mut size = self.len() as usize;
+        if size == 0 {
+            return 0;
         }
+        let mut base = 0usize;
+        while size > 1 {
+            let half = size / 2;
+            let mid = base + half;
+            let cmp = self.load_pkey(mid * self.type_size).cmp(&key);
+            base = if cmp == Ordering::Less { mid } else { base };
+            size -= half;
+        }
+        let cmp = self.load_pkey(base * self.type_size).cmp(&key);
+        base as u64 + (cmp == Ordering::Less) as u64
     }
+    fn upper_bound(&self, key: u64) -> u64 {
+        let mut size = self.len() as usize;
+        if size == 0 {
+            return 0;
+        }
+        let mut base = 0usize;
+        while size > 1 {
+            let half = size / 2;
+            let mid = base + half;
+            let cmp = self.load_pkey(mid * self.type_size).cmp(&key);
+            base = if cmp == Ordering::Greater { base } else { mid };
+            size -= half;
+        }
+        let cmp = self.load_pkey(base * self.type_size).cmp(&key);
+        base as u64 + (cmp != Ordering::Greater) as u64
+    }
+    // Returns the index which is larger or equals to a
     pub fn insert(&mut self, t: DynamicTupleInstance) {
         assert_eq!(t.len, self.type_size);
         self.dirty = true;
-        let position = self
-            .binary_search(t.first())
-            .unwrap_or((self.data.len() / self.type_size) as u64) as usize
+        let position = (self
+            .lower_bound(t.first()) as usize)
             * self.type_size;
         let len = self.data.len();
         if self.data.capacity() < len + self.type_size {
@@ -306,23 +312,35 @@ impl TableBase2 {
         self.dirty = false;
         new_pos
     }
-
+    pub fn get_ranges<RB: RangeBounds<u64>>(&self, rb: RB) -> std::ops::Range<u64> {
+        let start = match rb.start_bound() {
+            Bound::Included(x) => self.lower_bound(*x) as u64,
+            Bound::Excluded(x) => self.upper_bound(*x) as u64,
+            Bound::Unbounded => { 0 }
+        };
+        let end = match rb.end_bound() {
+            Bound::Included(x) => { self.upper_bound(*x) as u64 },
+            Bound::Excluded(x) => { self.lower_bound(*x) as u64 }
+            Bound::Unbounded => { self.len() }
+        };
+        std::ops::Range {
+            start,
+            end,
+        }
+    }
     pub fn search_value(&self, value: u64) -> Vec<&[u8]> {
         let mut ans = Vec::new();
-        if let Some(mut location) = self.binary_search(value) {
-            loop {
-                let index = location as usize * self.type_size;
-                if index + 8 >= self.data.len() || self.load_pkey(index) != value {
-                    break;
-                }
-                ans.push(&self.data[index..index + self.type_size]);
-                location += 1;
+        let mut location = self.lower_bound(value);
+        loop {
+            let index = location as usize * self.type_size;
+            if index + 8 >= self.data.len() || self.load_pkey(index) != value {
+                break;
             }
-            assert!(self.limits.overlaps(&(value..=value)) || ans.is_empty());
-            ans
-        } else {
-            vec![]
+            ans.push(&self.data[index..index + self.type_size]);
+            location += 1;
         }
+        assert!(self.limits.overlaps(&(value..=value)) || ans.is_empty());
+        ans
     }
 }
 
@@ -380,7 +398,7 @@ fn works() {
 
     let db1 = TableBase2::from_reader_and_heap(page, &[]);
 
-    let index = db1.binary_search(v[30]).unwrap() * db1.type_size as u64;
+    let index = db1.lower_bound(v[30]) * db1.type_size as u64;
     println!("Loading {}", index);
     let tup = db1.load_value(index as usize);
 
@@ -435,4 +453,38 @@ fn bp_works() {
     let file = std::mem::take(&mut ps.file);
     let ps = PageSerializer::create_from_reader(file, None);
     dbg!(&ps.clone_headers());
+}
+
+#[test]
+fn duplicate_pkeys_works() {
+    let mut ps = PageSerializer::default();
+
+    let mut table = TableBase2::new(1, Db1String::TYPE_SIZE as usize * 2 + 8);
+    let dyn = DynamicTuple::new(vec![Type::Int, Type::String, Type::String]);
+    for _ in 0..5 {
+        let ty = TupleBuilder::default()
+            .add_int(3)
+            .add_string("hi")
+            .add_string("world");
+        assert!(ty.type_check(&dyn));
+        let tup = ty.build(&mut table.heap_mut());
+        table.insert(tup)
+    }
+    assert_eq!(table.search_value(3).len(), 5);
+}
+
+#[test]
+fn test_get_ranges() {
+    let mut table = TableBase2::new(1, 8);
+    let dyn = DynamicTuple::new(vec![Type::Int]);
+    for i in [1, 3, 4, 5, 5, 5, 5, 7, 9] {
+        let ty = TupleBuilder::default()
+            .add_int(i);
+        assert!(ty.type_check(&dyn));
+        let tup = ty.build(&mut table.heap_mut());
+        table.insert(tup)
+    }
+
+    assert_eq!(table.get_ranges(0..3), 0..1);
+    assert_eq!(table.get_ranges(1..6), 0..7);
 }

@@ -9,6 +9,7 @@ log = "*"
 env_logger = {version = "*", default-features = false}
 rand = {version = "*", features = ["std", "std_rng"]}
 rand_chacha = "0.3.1"
+superslice = "*"
 
 [dev-dependencies]
 

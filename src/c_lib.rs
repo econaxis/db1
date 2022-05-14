@@ -49,6 +49,7 @@ mod table_base2;
 mod table_manager;
 mod table_traits;
 mod tests;
+mod ra_ops;
 
 #[repr(C)]
 #[derive(Clone, Debug, Eq)]

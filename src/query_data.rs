@@ -14,7 +14,7 @@ impl<'a, W: RWS> QueryData<'a, W> {
         accessed_pages: Vec<u64>,
         ps: &'a mut PageSerializer<W>,
     ) -> Self {
-        assert!(accessed_pages.len() <= 1);
+        // assert!(accessed_pages.len() <= 1);
         Self {
             results,
             accessed_pages: accessed_pages.first().copied(),
