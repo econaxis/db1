@@ -2,6 +2,7 @@ use std::collections::Bound;
 use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek, Write};
 use std::ops::RangeBounds;
+use dynamic_tuple::TypeData;
 
 use table_base::read_to_buf;
 
@@ -62,8 +63,8 @@ impl<T> Default for Range<T> {
     }
 }
 
-impl Range<u64> {
-    pub fn new(init: Option<u64>, init1: Option<u64>) -> Self {
+impl Range<TypeData> {
+    pub fn new(init: Option<TypeData>, init1: Option<TypeData>) -> Self {
         Self {
             min: init,
             max: init1,
@@ -82,16 +83,15 @@ impl Range<u64> {
     }
 
     // Adds new element to the range, potentially expanding the min and max extrema
-    pub fn add(&mut self, new_elt: u64) {
-        if Self::check_else_true(Some(new_elt), self.min, |new, min| new < min) {
-            self.min = Some(new_elt);
+    pub fn add(&mut self, new_elt: TypeData) {
+        if Self::check_else_true(Some(&new_elt), self.min.as_ref(), |new, min| new < min) {
+            self.min = Some(new_elt.clone());
         }
-        if Self::check_else_true(Some(new_elt), self.max, |new, max| new > max) {
+        if Self::check_else_true(Some(&new_elt), self.max.as_ref(), |new, max| new > max) {
             self.max = Some(new_elt);
         }
     }
 }
-
 impl FromReader for Range<u64> {
     fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
         let mut check: u16 = 0;
@@ -107,13 +107,16 @@ impl FromReader for Range<u64> {
                     max: Some(max),
                 }
             }
-            OptionState::None => Self::default(),
+            OptionState::None => {
+                panic!("Option state is none");
+                Self::default()
+            },
         }
     }
 }
 
-impl Range<u64> {
-    pub fn overlaps<RB: RangeBounds<u64>>(&self, rb: &RB) -> bool {
+impl<T: PartialEq + PartialOrd> Range<T> {
+    pub fn overlaps<RB: RangeBounds<T>>(&self, rb: &RB) -> bool {
         match (&self.min, &self.max) {
             (Some(min), Some(max)) => {
                 let min_in = match rb.start_bound() {
@@ -133,15 +136,15 @@ impl Range<u64> {
         }
     }
 }
-impl RangeBounds<u64> for Range<u64> {
-    fn start_bound(&self) -> Bound<&u64> {
+impl RangeBounds<TypeData> for Range<TypeData> {
+    fn start_bound(&self) -> Bound<&TypeData> {
         match &self.min {
             None => Bound::Unbounded,
             Some(x) => Bound::Included(x),
         }
     }
 
-    fn end_bound(&self) -> Bound<&u64> {
+    fn end_bound(&self) -> Bound<&TypeData> {
         match &self.max {
             None => Bound::Unbounded,
             Some(x) => Bound::Included(x),
@@ -152,5 +155,23 @@ impl RangeBounds<u64> for Range<u64> {
 impl<T: Debug> Debug for Range<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("Range({:?} {:?})", self.min, self.max))
+    }
+}
+
+
+impl FromReader for Range<TypeData> {
+    fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
+        let min = Some(TypeData::from_reader_and_heap(&mut r, heap));
+        let max = Some(TypeData::from_reader_and_heap(&mut r, heap));
+        Self {
+            min, max
+        }
+    }
+}
+
+impl BytesSerialize for Range<TypeData> {
+    fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut data: W, mut heap: W1) {
+        self.min.as_ref().unwrap().serialize_with_heap(&mut data, &mut heap);
+        self.max.as_ref().unwrap().serialize_with_heap(&mut data, &mut heap);
     }
 }

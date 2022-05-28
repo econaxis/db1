@@ -12,6 +12,7 @@ struct WhereByPkey<'a> {
     source: &'a mut TypedTable,
     pkey: u64
 }
+
 //
 // impl<'a> Iterator for WhereByPkey<'a> {
 //     type Item = TupleBuilder;

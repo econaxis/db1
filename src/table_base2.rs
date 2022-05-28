@@ -7,23 +7,29 @@ use std::ops::{RangeBounds, RangeInclusive};
 use std::option::Option::None;
 
 
-use dynamic_tuple::{RWS, Type};
+use dynamic_tuple::{RWS, Type, TypeData};
 use dynamic_tuple::{DynamicTuple, DynamicTupleInstance, TupleBuilder};
 use hash::InvalidWriter;
 use serializer::PageSerializer;
 use table_base::read_to_buf;
 use ::{BytesSerialize, Db1String};
 use {ChunkHeader, Range};
-use {FromReader, SuitableDataType};
+use {FromReader};
+
+pub enum TableType {
+    Data,
+    Index(Type),
+}
 
 pub struct TableBase2 {
     pub ty: u64,
     data: Vec<u8>,
-    pub limits: Range<u64>,
+    pub limits: Range<TypeData>,
     type_size: usize,
     heap: Heap,
     pub dirty: bool,
     pub loaded_location: Option<u64>,
+    pub table_type: TableType,
 }
 
 pub struct Heap(Cursor<Vec<u8>>, BinaryHeap<(u32, u32)>);
@@ -105,7 +111,7 @@ Get from all     - seek out all pages with specific ID, matching range
  */
 impl TableBase2 {
     const TABLEBASE2: u64 = 0xf6c4f2fcf200310e;
-    pub fn new(ty: u64, type_size: usize) -> Self {
+    pub fn new(ty: u64, type_size: usize, table_type: TableType) -> Self {
         Self {
             ty,
             data: Vec::with_capacity(16000),
@@ -114,6 +120,7 @@ impl TableBase2 {
             heap: Default::default(),
             dirty: true,
             loaded_location: None,
+            table_type
         }
     }
     pub fn heap_mut(&mut self) -> &mut Cursor<Vec<u8>> {
@@ -130,12 +137,16 @@ impl TableBase2 {
             type_size: self.type_size as u32,
             tuple_count: 0,
             heap_size: self.heap.len() as u32,
+            // todo May 17: how to put limits when there's a variable length index tuple?
             limits: self.limits.clone(),
             compressed_size: 0,
         }
     }
-    pub fn load_pkey(&self, ind: usize) -> u64 {
-        u64::from_le_bytes(self.data[ind..ind + 8].try_into().unwrap())
+    pub fn load_pkey(&self, ind: usize) -> TypeData {
+        match self.table_type {
+            TableType::Data | TableType::Index(Type::Int) => TypeData::Int(u64::from_le_bytes(self.data[ind..ind + 8].try_into().unwrap())),
+            TableType::Index(Type::String) => TypeData::String(Db1String::from_reader_and_heap(&self.data[ind..], self.heap.as_slice()))
+        }
     }
     pub fn load_value(&self, ind: usize) -> &[u8] {
         &self.data[ind..ind + self.type_size]
@@ -156,7 +167,30 @@ impl TableBase2 {
         self.heap.len()
     }
 
-    fn lower_bound(&self, key: u64) -> u64 {
+    fn cmp_pkey(&self, ind: usize, value: &TypeData) -> Ordering {
+        self.load_pkey(ind).partial_cmp(&value).unwrap()
+        // match (&self.table_type, value) {
+        //     (TableType::Data, TypeData::Int(int)) => {
+        //         self.load_pkey(ind).cmp(&int)
+        //     }
+        //     (TableType::Index(Type::Int), TypeData::Int(int)) => {
+        //         let td = DynamicTuple::new(vec![Type::Int, Type::Int, Type::Int]);
+        //         let bytes = self.load_index(ind);
+        //         let tup = td.read_tuple(bytes, 0, self.heap.as_slice());
+        //         tup.extract_int(1).cmp(&int)
+        //     }
+        //     (TableType::Index(Type::String), TypeData::String(str)) => {
+        //         let td = DynamicTuple::new(vec![Type::Int, Type::String, Type::Int]);
+        //         let bytes = self.load_index(ind);
+        //         let tup = td.read_tuple(bytes, 0, self.heap.as_slice());
+        //         tup.extract_string(1).cmp(str.as_buffer())
+        //     }
+        //     _ => panic!("Invalid configuration")
+        // }
+    }
+
+    // Code gotten from `superslice` crate
+    fn lower_bound(&self, key: &TypeData) -> u64 {
         let mut size = self.len() as usize;
         if size == 0 {
             return 0;
@@ -165,14 +199,14 @@ impl TableBase2 {
         while size > 1 {
             let half = size / 2;
             let mid = base + half;
-            let cmp = self.load_pkey(mid * self.type_size).cmp(&key);
+            let cmp = self.cmp_pkey(mid * self.type_size, key);
             base = if cmp == Ordering::Less { mid } else { base };
             size -= half;
         }
-        let cmp = self.load_pkey(base * self.type_size).cmp(&key);
+        let cmp = self.cmp_pkey(base * self.type_size, key);
         base as u64 + (cmp == Ordering::Less) as u64
     }
-    fn upper_bound(&self, key: u64) -> u64 {
+    fn upper_bound(&self, key: &TypeData) -> u64 {
         let mut size = self.len() as usize;
         if size == 0 {
             return 0;
@@ -181,19 +215,20 @@ impl TableBase2 {
         while size > 1 {
             let half = size / 2;
             let mid = base + half;
-            let cmp = self.load_pkey(mid * self.type_size).cmp(&key);
+            let cmp = self.cmp_pkey(mid * self.type_size, key);
             base = if cmp == Ordering::Greater { base } else { mid };
             size -= half;
         }
-        let cmp = self.load_pkey(base * self.type_size).cmp(&key);
+        let cmp = self.cmp_pkey(base * self.type_size, key);
         base as u64 + (cmp != Ordering::Greater) as u64
     }
     // Returns the index which is larger or equals to a
-    pub fn insert(&mut self, t: DynamicTupleInstance) {
-        assert_eq!(t.len, self.type_size);
+    pub fn insert_tb(&mut self, t: TupleBuilder) {
+        let inst = t.build(self.heap_mut());
+        assert_eq!(inst.len, self.type_size);
         self.dirty = true;
-        let position = (self
-            .lower_bound(t.first()) as usize)
+        let position = self
+            .lower_bound(t.first_v2()) as usize
             * self.type_size;
         let len = self.data.len();
         if self.data.capacity() < len + self.type_size {
@@ -203,23 +238,11 @@ impl TableBase2 {
 
         self.data
             .copy_within(position..len, position + self.type_size);
-        self.data[position..position + self.type_size].copy_from_slice(&t.data[0..self.type_size]);
+        self.data[position..position + self.type_size].copy_from_slice(&inst.data[0..self.type_size]);
 
-        self.limits.add(t.first());
-    }
-    pub fn assert_sorted(&self) -> Vec<u64> {
-        assert!((0..self.len() as usize)
-            .map(|i| self.load_pkey(i * self.type_size))
-            .is_sorted());
-        (0..self.len() as usize)
-            .map(|i| self.load_pkey(i * self.type_size))
-            .collect()
+        self.limits.add(t.first_v2().clone());
     }
 
-    pub fn insert_tb(&mut self, tb: TupleBuilder) {
-        let inst = tb.build(self.heap_mut());
-        self.insert(inst);
-    }
 
     fn find_split_point(&self, mut v: usize) -> usize {
         assert!(v >= 1);
@@ -282,17 +305,18 @@ impl TableBase2 {
             heap: new_heap1,
             dirty: true,
             loaded_location: None,
+            table_type: TableType::Data
         })
     }
 
     pub fn force_flush<W: Write + Read + Seek>(&mut self, ps: &mut PageSerializer<W>) -> u64 {
-        println!("Forcing flush");
         if std::thread::panicking() {
+            println!("Cancelled flush due to panicking");
             return 0;
         }
 
         if self.loaded_location.is_some() {
-            ps.free_page(self.ty, self.limits.min.unwrap());
+            ps.free_page(self.ty, self.limits.min.clone().unwrap());
         }
 
         let mut buf: Cursor<Vec<u8>> = Cursor::default();
@@ -304,23 +328,20 @@ impl TableBase2 {
         buf.write_all(&(Self::TABLEBASE2).to_le_bytes()).unwrap();
 
         let buf = buf.into_inner();
-        let len = buf.len();
-
-        let new_pos = ps.add_page(buf, len as u64, ch);
-        println!("Loaded loc: {}; Len: {}", new_pos, len);
+        let new_pos = ps.add_page(buf, ch);
         self.loaded_location = Some(new_pos);
         self.dirty = false;
         new_pos
     }
-    pub fn get_ranges<RB: RangeBounds<u64>>(&self, rb: RB) -> std::ops::Range<u64> {
+    pub fn get_ranges<RB: RangeBounds<TypeData>>(&self, rb: RB) -> std::ops::Range<u64> {
         let start = match rb.start_bound() {
-            Bound::Included(x) => self.lower_bound(*x) as u64,
-            Bound::Excluded(x) => self.upper_bound(*x) as u64,
+            Bound::Included(x) => self.lower_bound(x) as u64,
+            Bound::Excluded(x) => self.upper_bound(x) as u64,
             Bound::Unbounded => { 0 }
         };
         let end = match rb.end_bound() {
-            Bound::Included(x) => { self.upper_bound(*x) as u64 },
-            Bound::Excluded(x) => { self.lower_bound(*x) as u64 }
+            Bound::Included(x) => { self.upper_bound(x) as u64 }
+            Bound::Excluded(x) => { self.lower_bound(x) as u64 }
             Bound::Unbounded => { self.len() }
         };
         std::ops::Range {
@@ -328,18 +349,17 @@ impl TableBase2 {
             end,
         }
     }
-    pub fn search_value(&self, value: u64) -> Vec<&[u8]> {
+    pub fn search_value(&self, value: TypeData) -> Vec<&[u8]> {
         let mut ans = Vec::new();
-        let mut location = self.lower_bound(value);
-        loop {
+        let mut range = self.get_ranges(&value..=&value);
+        for location in range {
             let index = location as usize * self.type_size;
             if index + 8 >= self.data.len() || self.load_pkey(index) != value {
                 break;
             }
             ans.push(&self.data[index..index + self.type_size]);
-            location += 1;
         }
-        assert!(self.limits.overlaps(&(value..=value)) || ans.is_empty());
+        assert!(self.limits.overlaps(&(&value..=&value)) || ans.is_empty());
         ans
     }
 }
@@ -371,6 +391,7 @@ impl FromReader for TableBase2 {
             heap: Heap::new(Cursor::new(heap), Default::default()),
             dirty: false,
             loaded_location: None,
+            table_type: TableType::Data
         }
     }
 }
@@ -378,7 +399,7 @@ impl FromReader for TableBase2 {
 #[test]
 fn works() {
     use dynamic_tuple::Type;
-    let mut db = TableBase2::new(19, (Db1String::TYPE_SIZE * 2 + 8) as usize);
+    let mut db = TableBase2::new(19, (Db1String::TYPE_SIZE * 2 + 8) as usize, TableType::Data);
     let mut ps = PageSerializer::create(Cursor::new(Vec::new()), None);
 
     let v: Vec<u64> = (0..1000).map(|a| (a * (a + 1000)) % 30).collect();
@@ -387,8 +408,7 @@ fn works() {
             .add_int(*i)
             .add_string("hello")
             .add_string("world");
-        let inst = tup.build(&mut db.heap.0);
-        db.insert(inst);
+        db.insert_tb(tup);
     }
 
     db.force_flush(&mut ps);
@@ -398,7 +418,7 @@ fn works() {
 
     let db1 = TableBase2::from_reader_and_heap(page, &[]);
 
-    let index = db1.lower_bound(v[30]) * db1.type_size as u64;
+    let index = db1.lower_bound(&TypeData::Int(v[30])) * db1.type_size as u64;
     println!("Loading {}", index);
     let tup = db1.load_value(index as usize);
 
@@ -413,12 +433,12 @@ fn works() {
     println!("Split result {:?} {:?}", db, split_db);
 
     dbg!(dyntuple.read_tuple(
-        db.search_value((5 * 1005) % 30).first().unwrap(),
+        db.search_value(TypeData::Int((5 * 1005) % 30)).first().unwrap(),
         0,
         db.heap.0.get_ref(),
     ));
     dbg!(dyntuple.read_tuple(
-        db.search_value(*v.iter().min().unwrap()).first().unwrap(),
+        db.search_value(TypeData::Int(*v.iter().min().unwrap())).first().unwrap(),
         0,
         split_db.heap.0.get_ref(),
     ));
@@ -438,14 +458,13 @@ fn bp_works() {
     let mut ps = PageSerializer::default();
 
     for _ in 0..100 {
-        let mut table = TableBase2::new(1, Db1String::TYPE_SIZE as usize * 2 + 8);
+        let mut table = TableBase2::new(1, Db1String::TYPE_SIZE as usize * 2 + 8, TableType::Data);
         for i in 0..40 {
             let ty = TupleBuilder::default()
                 .add_int(i)
                 .add_string("hi")
                 .add_string("world");
-            let tup = ty.build(&mut table.heap_mut());
-            table.insert(tup)
+            table.insert_tb(ty)
         }
         table.force_flush(&mut ps);
     }
@@ -459,7 +478,7 @@ fn bp_works() {
 fn duplicate_pkeys_works() {
     let mut ps = PageSerializer::default();
 
-    let mut table = TableBase2::new(1, Db1String::TYPE_SIZE as usize * 2 + 8);
+    let mut table = TableBase2::new(1, Db1String::TYPE_SIZE as usize * 2 + 8, TableType::Data);
     let dyn = DynamicTuple::new(vec![Type::Int, Type::String, Type::String]);
     for _ in 0..5 {
         let ty = TupleBuilder::default()
@@ -467,24 +486,22 @@ fn duplicate_pkeys_works() {
             .add_string("hi")
             .add_string("world");
         assert!(ty.type_check(&dyn));
-        let tup = ty.build(&mut table.heap_mut());
-        table.insert(tup)
+        table.insert_tb(ty)
     }
-    assert_eq!(table.search_value(3).len(), 5);
+    assert_eq!(table.search_value(TypeData::Int(3)).len(), 5);
 }
 
 #[test]
 fn test_get_ranges() {
-    let mut table = TableBase2::new(1, 8);
+    let mut table = TableBase2::new(1, 8, TableType::Data);
     let dyn = DynamicTuple::new(vec![Type::Int]);
     for i in [1, 3, 4, 5, 5, 5, 5, 7, 9] {
         let ty = TupleBuilder::default()
             .add_int(i);
         assert!(ty.type_check(&dyn));
-        let tup = ty.build(&mut table.heap_mut());
-        table.insert(tup)
+        table.insert_tb(ty)
     }
 
-    assert_eq!(table.get_ranges(0..3), 0..1);
-    assert_eq!(table.get_ranges(1..6), 0..7);
+    assert_eq!(table.get_ranges(TypeData::Int(0)..TypeData::Int(3)), 0..1);
+    assert_eq!(table.get_ranges(TypeData::Int(1)..TypeData::Int(6)), 0..7);
 }

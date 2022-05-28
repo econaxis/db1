@@ -7,6 +7,7 @@ use chunk_header::ChunkHeaderIndex;
 use table_base::read_to_buf;
 use table_base2::TableBase2;
 use {ChunkHeader, FromReader};
+use dynamic_tuple::TypeData;
 
 #[derive(Debug)]
 pub struct PageSerializer<W: Read + Write + Seek> {
@@ -17,6 +18,7 @@ pub struct PageSerializer<W: Read + Write + Seek> {
     pub cache: HashMap<u64, TableBase2>,
     constant_size: Option<u64>,
 }
+
 
 impl Default for PageSerializer<Cursor<Vec<u8>>> {
     fn default() -> Self {
@@ -74,11 +76,15 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
     const WORKING_PAGE: u16 = 31920;
     const PAGEOVERHEAD: u64 = 6;
     const DELETED_PAGE: u16 = 21923;
+
+    pub fn maximum_serialized_len(&self) -> usize {
+        self.constant_size.unwrap_or(16000) as usize
+    }
     pub fn replace_inner(&mut self, w: W) -> W {
         std::mem::replace(&mut self.file, w)
     }
 
-    pub fn free_page(&mut self, ty: u64, pkey: u64) {
+    pub fn free_page(&mut self, ty: u64, pkey: TypeData) {
         // Check that page is still valid
         let p = self.previous_headers.remove(ty, pkey);
         if let PageResult::Good(pd) = Self::page_checked(&mut self.file, Some(p)) {
@@ -217,7 +223,7 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
         }
     }
     pub fn load_page_cached(&mut self, p: u64) -> &mut TableBase2 {
-        const BPOOLSIZE: usize = 5;
+        const BPOOLSIZE: usize = 5000;
         if self.cache.len() >= BPOOLSIZE {
             let mut unload_count = self.cache.len() - BPOOLSIZE;
             let keys: Vec<_> = self.cache.keys().cloned().collect();
@@ -237,7 +243,6 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
         let file = &mut self.file;
         let table = self.cache.entry(p).or_insert_with(|| {
             let page_reader = Self::file_get_page(file, p);
-            println!("Location: {p}, len: {}", page_reader.1);
             let mut page = TableBase2::from_reader_and_heap(page_reader, &[]);
             page.loaded_location = Some(p);
             page
@@ -298,7 +303,7 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
         assert!(self.pinned.remove(&page));
     }
 
-    pub fn get_in_all_insert(&self, ty: u64, pkey: u64) -> Option<u64> {
+    pub fn get_in_all_insert(&self, ty: u64, pkey: TypeData) -> Option<u64> {
         let left = self.previous_headers.get_in_one_it(ty, pkey).next_back();
 
         left.map(|a| a.1.location)
@@ -315,11 +320,11 @@ impl<W: Read> Read for LimitedReader<W> {
     }
 }
 
+
 impl<W: Write + Seek + Read> PageSerializer<W> {
-    pub fn add_page(&mut self, mut buf: Vec<u8>, size: u64, ch: ChunkHeader) -> u64 {
-        assert_eq!(buf.len(), size as usize);
+    pub fn add_page(&mut self, mut buf: Vec<u8>, ch: ChunkHeader) -> u64 {
         if let Some(sz) = self.constant_size {
-            assert!(size < sz);
+            assert!(buf.len() < sz as usize);
             buf.resize((sz) as usize, 0);
         }
         // Check for deleted pages
@@ -331,12 +336,11 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
                 self.file.seek(SeekFrom::End(0)).unwrap()
             }
         };
-        println!("Putting page to pos {new_pos}");
         self.file
             .write_all(&PageSerializer::<W>::WORKING_PAGE.to_le_bytes())
             .unwrap();
         self.file
-            .write_all(&(self.constant_size.unwrap_or(size) as u32).to_le_bytes())
+            .write_all(&(self.constant_size.unwrap_or(buf.len() as u64) as u32).to_le_bytes())
             .unwrap();
         self.file.write_all(&buf).unwrap();
 
@@ -349,14 +353,15 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
         Self::file_get_page(&mut self.file, position)
     }
 
-    pub fn get_in_all(&self, ty: u64, r: Option<u64>) -> impl DoubleEndedIterator<Item = u64> + '_ {
+    pub fn get_in_all(&self, ty: u64, r: Option<TypeData>) -> impl DoubleEndedIterator<Item = u64> + '_ {
         let candidate_pages = self
             .previous_headers
-            .get_in_one_it(ty, r.unwrap_or(u64::MAX));
+            // TODO(hn): r::MAX, r::MIN
+            .get_in_one_it(ty, r.clone().unwrap_or(TypeData::Null));
 
         candidate_pages.filter_map(move |x| {
             let ch = x.1;
-            if r.is_some() && !ch.ch.limits.overlaps(&(r.unwrap()..=r.unwrap())) {
+            if r.is_some() && !ch.ch.limits.overlaps(&(r.clone().unwrap()..=r.clone().unwrap())) {
                 None
             } else {
                 Some(ch.location)
@@ -387,14 +392,14 @@ fn serializer_works() {
         tuple_count: 0,
         heap_size: 0,
         limits: Range {
-            min: Some(0),
-            max: Some(0),
+            min: Some(TypeData::Int(0)),
+            max: Some(TypeData::Int(0)),
         },
         compressed_size: 0,
     };
     let mut ps = PageSerializer::default();
-    ps.add_page(vec![0, 1, 2, 3, 4, 5], 6, default_ch.clone());
-    ps.add_page(vec![5, 6, 9, 1, 2, 3], 6, default_ch);
+    ps.add_page(vec![0, 1, 2, 3, 4, 5],  default_ch.clone());
+    ps.add_page(vec![5, 6, 9, 1, 2, 3],  default_ch);
 
     let mut f = std::mem::take(&mut ps.file);
     f.set_position(0);
@@ -408,7 +413,6 @@ fn delete_works() {
     let mut ps = PageSerializer::default();
     let loc = ps.add_page(
         vec![1u8; 100],
-        100,
         ChunkHeader {
             ty: 0,
             tot_len: 0,
@@ -416,17 +420,17 @@ fn delete_works() {
             tuple_count: 0,
             heap_size: 0,
             limits: Range {
-                min: Some(3),
-                max: Some(3),
+                min: Some(TypeData::Int(3)),
+                max: Some(TypeData::Int(3)),
             },
             compressed_size: 0,
         },
     );
 
-    assert_eq!(ps.get_in_all(0, Some(3)).next(), Some(loc));
-    ps.free_page(0, 3);
-    assert_eq!(ps.get_in_all(0, Some(3)).next(), None);
+    assert_eq!(ps.get_in_all(0, Some(TypeData::Int(3))).next(), Some(loc));
+    ps.free_page(0, TypeData::Int(3));
+    assert_eq!(ps.get_in_all(0, Some(TypeData::Int(3))).next(), None);
 
     let ps1 = PageSerializer::create_from_reader(std::mem::take(&mut ps.file), None);
-    assert_eq!(ps1.get_in_all(0, Some(3)).next(), None);
+    assert_eq!(ps1.get_in_all(0, Some(TypeData::Int(3))).next(), None);
 }

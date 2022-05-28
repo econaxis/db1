@@ -34,49 +34,6 @@ impl Default for HashDb {
     }
 }
 
-impl HashDb {
-    pub fn serialize<W: Write>(&self, mut data: W) -> ChunkHeader {
-        let chunk_header = self.get_chunk_header();
-        chunk_header.serialize_with_heap(&mut data, InvalidWriter);
-
-        for j in self.hash.values() {
-            j.serialize_with_heap(&mut data, InvalidWriter);
-        }
-        chunk_header
-    }
-}
-
-impl FromReader for HashDb {
-    fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
-        assert_eq!(heap, &[]);
-        let chunk_header = ChunkHeader::from_reader_and_heap(&mut r, heap);
-        log::debug!("Hash db chunk header {:?}", chunk_header);
-        let mut ret = HashDb::default();
-        for _ in 0..chunk_header.tuple_count {
-            let t = IndexKey::from_reader_and_heap(&mut r, heap);
-            ret.store_by_hash(t);
-        }
-        ret
-    }
-}
-
-impl HashDb {
-    fn get_chunk_header(&self) -> ChunkHeader {
-        ChunkHeader {
-            ty: 2,
-            type_size: 0,
-            tuple_count: self.hash.len() as u32,
-            tot_len: (self.hash.len() * std::mem::size_of::<IndexKey>()) as u32,
-            heap_size: 0,
-            limits: Range {
-                min: Some(0),
-                max: Some(0),
-            },
-            compressed_size: 0,
-        }
-    }
-}
-
 pub struct InvalidWriter;
 
 impl Read for InvalidWriter {
@@ -146,38 +103,3 @@ impl HashDb {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use std::io::Cursor;
-
-    use hash::HashDb;
-    use FromReader;
-
-    #[test]
-    fn test_hash_collision() {
-        let mut db = HashDb::default();
-
-        db.store("hello world", 1);
-        db.store("abcdef", 2);
-        db.store("hello world", 3);
-
-        assert_eq!(db.get("hello world"), [1, 3]);
-        assert_eq!(db.get("abcdef"), [2]);
-    }
-
-    #[test]
-    fn test_serialize() {
-        let mut db = HashDb::default();
-        db.store("hello world", 1);
-        db.store("hfdsafdello world", 10);
-        db.store("hello worl232d", 100);
-        db.store("hello wdsavcxorld", 1000);
-
-        let mut f: Cursor<Vec<u8>> = Cursor::default();
-        db.serialize(&mut f);
-
-        f.set_position(0);
-        let db1 = HashDb::from_reader_and_heap(f, &[]);
-        assert_eq!(db, db1);
-    }
-}

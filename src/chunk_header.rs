@@ -1,6 +1,8 @@
+use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::io::{Read, Seek, Write};
+use dynamic_tuple::{DynamicTuple, TypeData};
 
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
@@ -76,7 +78,7 @@ pub struct ChunkHeader {
     pub type_size: u32,
     pub tuple_count: u32,
     pub heap_size: u32,
-    pub limits: Range<u64>,
+    pub limits: Range<TypeData>,
     pub compressed_size: u32,
 }
 
@@ -121,20 +123,21 @@ impl Default for CHValue {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MinKey {
     ty: u16,
-    pkey: u64,
+    pkey: TypeData,
 }
+
 
 impl MinKey {
     pub fn start_ty(&self) -> MinKey {
         MinKey {
             ty: self.ty,
-            pkey: 0,
+            pkey: TypeData::Null,
         }
     }
-    pub fn new(ty: u64, pkey: u64) -> MinKey {
+    pub fn new(ty: u64, pkey: TypeData) -> MinKey {
         MinKey {
             ty: ty as u16,
             pkey,
@@ -152,25 +155,25 @@ impl Default for ChunkHeaderIndex {
 }
 
 impl ChunkHeaderIndex {
-    pub fn remove(&mut self, ty: u64, pkey: u64) -> u64 {
+    pub fn remove(&mut self, ty: u64, pkey: TypeData) -> u64 {
         let mk = MinKey::new(ty, pkey);
-        let k = self.0.range(mk.start_ty()..=mk).rev().next().unwrap();
+        let k = self.0.range(&mk.start_ty()..=&mk).rev().next().unwrap();
         let location = k.1.location;
-        let first = *k.0;
+        let first = k.0.clone();
         let _result = self.0.remove(&first).unwrap();
 
         location
     }
 
-    pub fn get_in_one_it(&self, ty: u64, pkey: u64) -> impl DoubleEndedIterator<Item = (&MinKey, &CHValue)> {
+    pub fn get_in_one_it(&self, ty: u64, pkey: TypeData) -> impl DoubleEndedIterator<Item = (&MinKey, &CHValue)> {
         let mk = MinKey::new(ty, pkey);
         let left = self.0.range(mk.start_ty()..=mk);
         left
     }
-    pub fn get_in_one_mut(&mut self, ty: u64, pkey: u64) -> Option<(&'_ MinKey, &'_ mut CHValue)> {
+    pub fn get_in_one_mut(&mut self, ty: u64, pkey: TypeData) -> impl DoubleEndedIterator<Item = (&MinKey, &mut CHValue)> {
         let mk = MinKey::new(ty, pkey);
-        let mut left = self.0.range_mut(mk.start_ty()..=mk).rev();
-        left.next()
+        let mut left = self.0.range_mut(mk.start_ty()..=mk);
+        left
     }
 
     pub fn push(&mut self, pos: u64, chunk_header: ChunkHeader) {
@@ -180,13 +183,13 @@ impl ChunkHeaderIndex {
             for i in self.0.iter().filter(|a| a.1.ch.ty == chunk_header.ty) {
                 assert!(prev_limits
                     .iter()
-                    .all(|a: &Range<u64>| !a.overlaps(&i.1.ch.limits)));
+                    .all(|a: &Range<TypeData>| !a.overlaps(&i.1.ch.limits)));
                 prev_limits.push(i.1.ch.limits.clone());
             }
             true
         });
 
-        let min_value = chunk_header.limits.min.unwrap();
+        let min_value = chunk_header.limits.min.clone().unwrap();
         let mk = MinKey::new(chunk_header.ty, min_value);
         self.0.insert(
             mk,
@@ -196,17 +199,17 @@ impl ChunkHeaderIndex {
             },
         );
     }
-    pub fn reset_limits(&mut self, ty: u64, old_min: u64, new_limit: Range<u64>) {
+    pub fn reset_limits(&mut self, ty: u64, old_min: TypeData, new_limit: Range<TypeData>) {
         let mk = MinKey::new(ty, old_min);
-        assert_eq!(self.0.range(mk..=mk).filter(|a| a.1.ch.ty == ty).count(), 1);
+        // debug_assert_eq!(self.0.range(mk..=mk).filter(|a| a.1.ch.ty == ty).count(), 1);
         let mut prev = self.0.remove(&mk).unwrap();
         prev.ch.limits = new_limit;
         self.push(prev.location, prev.ch);
     }
-    pub fn update_limits(&mut self, ty: u64, loc: u64, pkey: u64) {
-        let x = self.get_in_one_mut(ty, pkey).unwrap();
+    pub fn update_limits(&mut self, ty: u64, loc: u64, pkey: TypeData) {
+        let x = self.get_in_one_mut(ty, pkey.clone()).next().unwrap();
         assert_eq!(x.1.location, loc);
-        let x0 = *x.0;
+        let x0 = x.0.clone();
 
         // Since we're changing the lower bound, have to reindex in CH (as that btree is sorted by lower bound)
         if x.0.pkey > pkey {
@@ -216,7 +219,7 @@ impl ChunkHeaderIndex {
             value.ch.limits = new_limit.clone();
             let mk = MinKey::new(ty, new_limit.min.unwrap());
             self.0.insert(mk, value);
-        } else if !x.1.ch.limits.overlaps(&(pkey..=pkey)) {
+        } else if !x.1.ch.limits.overlaps(&(&pkey..=&pkey)) {
             // Just update the value
             x.1.ch.limits.add(pkey);
         }

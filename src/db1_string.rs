@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::io::{IoSlice, Read, Seek, Write};
@@ -14,6 +15,17 @@ pub enum Db1String {
 
     // Owned byte array
     Resolvedo(Vec<u8>),
+}
+
+impl PartialOrd for Db1String {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        todo!()
+    }
+}
+impl Ord for Db1String {
+    fn cmp(&self, other: &Self) -> Ordering {
+        todo!()
+    }
 }
 
 impl From<(*const c_char, u64)> for Db1String {
