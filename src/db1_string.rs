@@ -12,19 +12,19 @@ use crate::{BytesSerialize, FromReader};
 pub enum Db1String {
     // Offset + length to heap array
     Unresolved(u64, u64),
-
+    Ptr(*const u8, usize),
     // Owned byte array
     Resolvedo(Vec<u8>),
 }
 
 impl PartialOrd for Db1String {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        todo!()
+        self.as_buffer().partial_cmp(other.as_buffer())
     }
 }
 impl Ord for Db1String {
     fn cmp(&self, other: &Self) -> Ordering {
-        todo!()
+        self.partial_cmp(other).unwrap()
     }
 }
 
@@ -62,6 +62,9 @@ impl Debug for Db1String {
             Self::Resolvedo(_v) => f.write_fmt(format_args!("Empty Document")),
             Self::Unresolved(a, b) => {
                 f.write_fmt(format_args!("Document unknown ind {} len {}", *a, *b))
+            },
+            Self::Ptr(_, _) => {
+                f.write_fmt(format_args!("Pointer Db1string"))
             }
         }
     }
@@ -85,7 +88,18 @@ impl Db1String {
     pub fn as_buffer(&self) -> &[u8] {
         match self {
             Self::Resolvedo(s) => s,
+            Self::Ptr(ptr, len) => unsafe {
+                std::slice::from_raw_parts(*ptr, *len)
+            }
             _ => panic!(),
+        }
+    }
+    pub fn to_ptr(self, heap: &[u8]) -> Self {
+        match self {
+            Db1String::Unresolved(offset, len) => unsafe {
+                Db1String::Ptr(heap.as_ptr().add(offset as usize), len as usize)
+            },
+            _ => panic!()
         }
     }
     pub fn as_ptr(&self) -> *const c_char {
@@ -97,6 +111,7 @@ impl Db1String {
     pub fn as_ptr_allow_unresolved(&self) -> (*const u8, u64) {
         match self {
             Self::Resolvedo(a) => (a.as_ptr(), a.len() as u64),
+            Self::Ptr(ptr, len) => (*ptr, *len as u64),
             Self::Unresolved(_, _) => (std::ptr::null(), 0),
         }
     }
@@ -106,6 +121,7 @@ impl Db1String {
             Self::Unresolved(ind, len) => {
                 *self = Self::Resolvedo(heap[*ind as usize..(*ind + *len) as usize].to_vec())
             }
+            Self::Ptr(_, _) => panic!()
         }
     }
 }

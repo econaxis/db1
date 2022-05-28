@@ -3,7 +3,7 @@ use std::collections::{BinaryHeap, Bound};
 use std::convert::TryInto;
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::ops::{RangeBounds, RangeInclusive};
+use std::ops::{Index, RangeBounds, RangeInclusive};
 use std::option::Option::None;
 
 
@@ -145,7 +145,7 @@ impl TableBase2 {
     pub fn load_pkey(&self, ind: usize) -> TypeData {
         match self.table_type {
             TableType::Data | TableType::Index(Type::Int) => TypeData::Int(u64::from_le_bytes(self.data[ind..ind + 8].try_into().unwrap())),
-            TableType::Index(Type::String) => TypeData::String(Db1String::from_reader_and_heap(&self.data[ind..], self.heap.as_slice()))
+            TableType::Index(Type::String) => TypeData::String(Db1String::from_reader_and_heap(&self.data[ind..], self.heap.as_slice()).to_ptr(self.heap.as_slice()))
         }
     }
     pub fn load_value(&self, ind: usize) -> &[u8] {
@@ -413,6 +413,7 @@ fn works() {
 
     db.force_flush(&mut ps);
 
+    assert!(TypeData::Null < TypeData::Int(32324));
     let page = ps.get_in_all(19, None).next().unwrap();
     let page = ps.get_page(page);
 
@@ -504,4 +505,22 @@ fn test_get_ranges() {
 
     assert_eq!(table.get_ranges(TypeData::Int(0)..TypeData::Int(3)), 0..1);
     assert_eq!(table.get_ranges(TypeData::Int(1)..TypeData::Int(6)), 0..7);
+}
+
+#[test]
+fn test_index_type_table(){
+    let dyn = DynamicTuple::new(vec![Type::String, Type::String]);
+    let mut table = TableBase2::new(1, dyn.size() as usize, TableType::Index(Type::String));
+
+    let ty = TupleBuilder::default().add_string("Hello").add_string("World");
+    table.insert_tb(ty);
+    let ty = TupleBuilder::default().add_string("Mello").add_string("World");
+    table.insert_tb(ty);
+    let ty = TupleBuilder::default().add_string("Cello").add_string("World");
+    table.insert_tb(ty);
+
+    dbg!(table.get_ranges(TypeData::String("A".into())..TypeData::String("Z".into())));
+    dbg!(table.get_ranges(TypeData::String("A".into())..TypeData::String("Cf".into())));
+    dbg!(table.get_ranges(TypeData::String("A".into())..TypeData::String("Ma".into())));
+    dbg!(table.get_ranges(TypeData::String("A".into())..TypeData::String("Mez".into())));
 }

@@ -357,7 +357,9 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
         let candidate_pages = self
             .previous_headers
             // TODO(hn): r::MAX, r::MIN
-            .get_in_one_it(ty, r.clone().unwrap_or(TypeData::Null));
+            // will never have to compare across types because tables should all have the same time
+            .get_in_one_it(ty, r.clone().unwrap_or(TypeData::Int(u64::MAX)));
+
 
         candidate_pages.filter_map(move |x| {
             let ch = x.1;

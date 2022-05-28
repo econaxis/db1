@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::cmp::max;
+use std::cmp::{max, Ordering};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::ffi::{CStr, CString};
@@ -39,11 +39,44 @@ impl From<u64> for Type {
     }
 }
 
-#[derive(Debug, PartialEq, PartialOrd,Eq,Ord, Clone)]
+#[derive(Debug,Eq, Clone)]
 pub enum TypeData {
     Int(u64),
     String(Db1String),
     Null,
+}
+impl Ord for TypeData {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+impl PartialOrd for TypeData {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        let a = format!("{self:?} {other:?}");
+        let result = match (self, other) {
+            (TypeData::Int(x), TypeData::Int(y)) => x.partial_cmp(y),
+            (TypeData::String(x), TypeData::String(y)) => x.partial_cmp(y),
+            (TypeData::Null, TypeData::Null) => Some(Ordering::Equal),
+            (TypeData::Null, other) => Some(Ordering::Less),
+            (self_,TypeData::Null) => Some(Ordering::Greater),
+            _ => panic!("Invalid comparison between {:?} {:?}", self, other)
+        };
+        println!("Comparing {a} = {result:?}");
+        result
+    }
+}
+impl PartialEq for TypeData {
+    fn eq(&self, other: &Self) -> bool {
+        println!("Equaling {self:?} {other:?}");
+
+        match (self, other) {
+            (TypeData::Int(x), TypeData::Int(y)) => x.eq(y),
+                (TypeData::String(x), TypeData::String(y)) => x.eq(y),
+                (TypeData::Null, TypeData::Null) => true,
+            _ => false,
+            // _ => panic!("Invalid comparison between {:?} {:?}", self, other)
+        }
+    }
 }
 impl TypeData {
     const INT_TYPE: u8 = 1;
@@ -1125,7 +1158,7 @@ fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
     let mut indices: Vec<u64> = (0..100_000).collect();
     indices.shuffle(&mut thread_rng());
     let mut j = indices.iter().cycle();
-    for _ in 0..100_000 {
+    for _ in 0..10_000 {
         let j = *j.next().unwrap();
         let i = j + 10;
         parse_lex_sql(
@@ -1136,7 +1169,7 @@ fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
             &mut ps,
         );
     }
-    b.iter(|| {
+    for _ in 0..1000 {
         let j = *j.next().unwrap();
         let res1 = parse_lex_sql(
             &format!("SELECT * FROM tbl WHERE id EQUALS {j}"),
@@ -1146,7 +1179,7 @@ fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
         if let Some(r) = res1 {
             r.results();
         }
-    });
+    }
 }
 
 #[test]

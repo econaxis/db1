@@ -1,4 +1,5 @@
 use std::borrow::Borrow;
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::io::{Read, Seek, Write};
@@ -123,12 +124,17 @@ impl Default for CHValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Ord)]
 pub struct MinKey {
     ty: u16,
     pkey: TypeData,
 }
 
+impl PartialOrd for MinKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.ty.cmp(&other.ty).then(self.pkey.cmp(&other.pkey)))
+    }
+}
 
 impl MinKey {
     pub fn start_ty(&self) -> MinKey {
@@ -172,7 +178,7 @@ impl ChunkHeaderIndex {
     }
     pub fn get_in_one_mut(&mut self, ty: u64, pkey: TypeData) -> impl DoubleEndedIterator<Item = (&MinKey, &mut CHValue)> {
         let mk = MinKey::new(ty, pkey);
-        let mut left = self.0.range_mut(mk.start_ty()..=mk);
+        let mut left = self.0.range_mut(mk.start_ty()..=mk).rev();
         left
     }
 
