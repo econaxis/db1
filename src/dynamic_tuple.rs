@@ -54,7 +54,6 @@ impl Ord for TypeData {
 
 impl PartialOrd for TypeData {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        let a = format!("{self:?} {other:?}");
         let result = match (self, other) {
             (TypeData::Int(x), TypeData::Int(y)) => x.partial_cmp(y),
             (TypeData::String(x), TypeData::String(y)) => x.partial_cmp(y),
@@ -368,13 +367,9 @@ impl<W: RWS> Iterator for TableCursor<'_, '_, W> {
             Some(tuple)
         } else {
             if self.locations.len() > 1 {
-                // Unpin the current page and load the next page in
-                self.ps.unpin_page(self.locations.pop().unwrap());
-
                 self.reset_index_iterator();
                 self.next()
             } else if self.locations.len() == 1 {
-                self.ps.unpin_page(self.locations.pop().unwrap());
                 None
             } else {
                 None
@@ -396,14 +391,25 @@ impl TypedTable {
         let pkey = t.first_v2().clone();
         let (location, page) = match ps.get_in_all_insert(self.id_ty, pkey.clone()) {
             Some(location) => {
-                ps.previous_headers
-                    .update_limits(self.id_ty, location, pkey);
+                let page = ps.load_page_cached(location);
+                if !page.limits.overlaps(&(&pkey..=&pkey)) {
+                    ps.previous_headers
+                        .update_limits(self.id_ty, location, pkey);
+                }
+
+                // Have to load page again because of the damn borrow checker...
                 let page = ps.load_page_cached(location);
                 page.insert_tb(t);
                 (location, page)
             }
             None => {
-                let mut new_page = TableBase2::new(self.id_ty, self.ty.size() as usize, TableType::Data);
+                let table_type = if self.ty.fields[0] == Type::Int {
+                    TableType::Data
+                } else {
+                    TableType::Index(Type::String)
+                };
+
+                let mut new_page = TableBase2::new(self.id_ty, self.ty.size() as usize, table_type);
                 new_page.insert_tb(t);
                 let location = new_page.force_flush(ps);
                 (location, ps.load_page_cached(location))
@@ -415,7 +421,7 @@ impl TypedTable {
             let old_min_limits = page.limits.min.clone().unwrap();
             let newpage = page.split(&self.ty);
             if let Some(mut x) = newpage {
-                assert!(!x.limits.overlaps(&page.limits));
+                assert!(!x.limits.overlaps(&page.limits), "{:?} {:?}", &x.limits, &page.limits);
                 let page_limits = page.limits.clone();
                 ps.previous_headers
                     .reset_limits(self.id_ty, old_min_limits, page_limits);
@@ -423,7 +429,6 @@ impl TypedTable {
             }
         }
 
-        ps.unpin_page(location);
     }
 
     pub(crate) fn new<W: Write + Read + Seek>(
@@ -794,11 +799,12 @@ fn test_index_type_table2() {
     let mut ps = PageSerializer::default();
     let mut tt = TypedTable::new(DynamicTuple::new(vec![Type::String, Type::String]), 10, &mut ps, vec!["a", "b"]);
 
-    for i in 0..0_100_000u64 {
+    for i in 0..3_111_100u64 {
         let ty = TupleBuilder::default().add_string(i.to_string()).add_string((i * 10000).to_string());
         tt.store_raw(ty, &mut ps);
     }
 }
+
 #[test]
 fn typed_table_cursors() {
     let mut ps = PageSerializer::default();

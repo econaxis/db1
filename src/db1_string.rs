@@ -22,6 +22,7 @@ impl PartialOrd for Db1String {
         self.as_buffer().partial_cmp(other.as_buffer())
     }
 }
+
 impl Ord for Db1String {
     fn cmp(&self, other: &Self) -> Ordering {
         self.partial_cmp(other).unwrap()
@@ -62,9 +63,10 @@ impl Debug for Db1String {
             Self::Resolvedo(_v) => f.write_fmt(format_args!("Empty Document")),
             Self::Unresolved(a, b) => {
                 f.write_fmt(format_args!("Document unknown ind {} len {}", *a, *b))
-            },
-            Self::Ptr(_, _) => {
-                f.write_fmt(format_args!("Pointer Db1string"))
+            }
+            Self::Ptr(x, y) => {
+                let slice = std::str::from_utf8(unsafe { std::slice::from_raw_parts(*x, *y) }).unwrap_or("non-utf8");
+                f.write_fmt(format_args!("db1-{}", slice))
             }
         }
     }
@@ -153,13 +155,13 @@ fn as_bytes<T: 'static>(t: &T) -> &[u8] {
 impl BytesSerialize for Db1String {
     fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut data: W, mut heap: W1) {
         let slice = self.as_buffer();
+
         let slicelen = slice.len() as u32;
         let heap_position = heap.stream_position().unwrap() as u32;
-        let buf1 = IoSlice::new(as_bytes(&Self::STRING_CHECK_SEQ));
-        let buf2 = IoSlice::new(as_bytes(&heap_position));
-        let buf3 = IoSlice::new(as_bytes(&slicelen));
-        data.write_all_vectored([buf1, buf2, buf3].as_mut_slice())
-            .unwrap();
+
+        data.write_all(&Self::STRING_CHECK_SEQ.to_le_bytes()).unwrap();
+        data.write_all(&heap_position.to_le_bytes()).unwrap();
+        data.write_all(&slicelen.to_le_bytes()).unwrap();
         heap.write_all(slice).unwrap();
     }
 }
@@ -175,7 +177,7 @@ impl FromReader for Db1String {
 
         assert_eq!(check_sequence, Self::STRING_CHECK_SEQ);
 
-        if (loc == 0 && len == 0) || heap.is_empty() {
+        if loc == 0 && len == 0 {
             return Self::default();
         }
         Self::Unresolved(loc as u64, len as u64)

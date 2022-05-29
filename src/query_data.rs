@@ -22,9 +22,6 @@ impl<'a, W: RWS> QueryData<'a, W> {
         }
     }
     pub fn results(mut self) -> Vec<TupleBuilder> {
-        for page in std::mem::take(&mut self.accessed_pages) {
-            self.ps.unpin_page(page);
-        }
         std::mem::take(&mut self.results)
     }
     pub fn filter<F: FnMut(&TupleBuilder) -> bool>(&mut self, f: F) {

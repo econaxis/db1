@@ -91,6 +91,16 @@ impl Range<TypeData> {
             self.max = Some(new_elt.clone());
         }
     }
+    pub fn resolve(&mut self, heap: &[u8]) {
+        match self.min.as_mut() {
+            Some(TypeData::String(x)) => x.resolve_item(heap)
+            ,_ => {}
+        };
+        match self.max.as_mut() {
+            Some(TypeData::String(x)) => x.resolve_item(heap)
+            ,_ => {}
+        };
+    }
 }
 impl FromReader for Range<u64> {
     fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {

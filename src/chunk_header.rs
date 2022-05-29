@@ -2,8 +2,10 @@ use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
-use std::io::{Read, Seek, Write};
+use std::io::{Cursor, Read, Seek, Write};
 use dynamic_tuple::{DynamicTuple, TypeData};
+use table_base2::TableType;
+use table_base::read_to_buf;
 
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
@@ -22,11 +24,30 @@ impl BytesSerialize for ChunkHeader {
             tuple_count: self.tuple_count,
             heap_size: self.heap_size,
             compressed_size: self.compressed_size,
+            table_type: self.table_type.to_u8()
         };
         w.write_all(slice_from_type(&mut rc)).unwrap();
 
-        self.limits.serialize_with_heap(w, _heap);
+        let mut heap: Cursor<Vec<u8>> = Cursor::default();
+        self.limits.serialize_with_heap(&mut w, &mut heap);
+        w.write_all(&heap.stream_len().unwrap().to_le_bytes());
+        w.write_all(heap.get_ref().as_slice());
     }
+}
+
+// Describes a chunk of tuples, such as min/max ranges (for binary searches), size of the tuple, and how many tuples
+// Will be serialized along with the data itself for quicker searches.
+#[derive(PartialEq, Clone, Debug)]
+#[repr(C)]
+pub struct ChunkHeader {
+    pub ty: u64,
+    pub tot_len: u32,
+    pub type_size: u32,
+    pub tuple_count: u32,
+    pub heap_size: u32,
+    pub limits: Range<TypeData>,
+    pub compressed_size: u32,
+    pub table_type: TableType
 }
 
 #[derive(Default, Debug)]
@@ -39,6 +60,7 @@ struct ReadContainer {
     tuple_count: u32,
     heap_size: u32,
     compressed_size: u32,
+    table_type: u8
 }
 
 pub fn slice_from_type<T: Sized>(t: &mut T) -> &mut [u8] {
@@ -55,7 +77,15 @@ impl FromReader for Option<ChunkHeader> {
             println!("Check sequence doesn't match {:?}", rc);
             return None;
         }
-        let limits = Range::from_reader_and_heap(r, heap);
+        let mut limits = Range::from_reader_and_heap(&mut r, &[]);
+
+        let mut ch_heap_len = 0u64;
+        r.read_exact(slice_from_type(&mut ch_heap_len)).unwrap();
+        let mut ch_heap = Vec::default();
+        ch_heap.resize(ch_heap_len as usize, 0);
+        r.read_exact(&mut ch_heap);
+
+        limits.resolve(&ch_heap);
 
         Some(ChunkHeader {
             ty: rc.ty,
@@ -65,23 +95,12 @@ impl FromReader for Option<ChunkHeader> {
             tuple_count: rc.tuple_count,
             heap_size: rc.heap_size,
             compressed_size: rc.compressed_size,
+            table_type: TableType::from_u8(rc.table_type)
         })
     }
 }
 
-// Describes a chunk of tuples, such as min/max ranges (for binary searches), size of the tuple, and how many tuples
-// Will be serialized along with the data itself for quicker searches.
-#[derive(PartialEq, Clone, Debug)]
-#[repr(C)]
-pub struct ChunkHeader {
-    pub ty: u64,
-    pub tot_len: u32,
-    pub type_size: u32,
-    pub tuple_count: u32,
-    pub heap_size: u32,
-    pub limits: Range<TypeData>,
-    pub compressed_size: u32,
-}
+
 
 impl ChunkHeader {
     pub const MAXTYPESIZE: u64 = 60;
@@ -118,6 +137,7 @@ impl Default for CHValue {
                 heap_size: 0,
                 limits: Default::default(),
                 compressed_size: 0,
+                table_type: TableType::Data
             },
             location: 0,
         }
@@ -171,29 +191,18 @@ impl ChunkHeaderIndex {
         location
     }
 
-    pub fn get_in_one_it(&self, ty: u64, pkey: TypeData) -> impl DoubleEndedIterator<Item = (&MinKey, &CHValue)> {
+    pub fn get_in_one_it(&self, ty: u64, pkey: TypeData) -> impl DoubleEndedIterator<Item=(&MinKey, &CHValue)> {
         let mk = MinKey::new(ty, pkey);
         let left = self.0.range(mk.start_ty()..=mk);
         left
     }
-    pub fn get_in_one_mut(&mut self, ty: u64, pkey: TypeData) -> impl DoubleEndedIterator<Item = (&MinKey, &mut CHValue)> {
+    pub fn get_in_one_mut(&mut self, ty: u64, pkey: TypeData) -> impl DoubleEndedIterator<Item=(&MinKey, &mut CHValue)> {
         let mk = MinKey::new(ty, pkey);
         let mut left = self.0.range_mut(mk.start_ty()..=mk).rev();
         left
     }
 
     pub fn push(&mut self, pos: u64, chunk_header: ChunkHeader) {
-        // Check
-        debug_assert!({
-            let mut prev_limits = Vec::new();
-            for i in self.0.iter().filter(|a| a.1.ch.ty == chunk_header.ty) {
-                assert!(prev_limits
-                    .iter()
-                    .all(|a: &Range<TypeData>| !a.overlaps(&i.1.ch.limits)));
-                prev_limits.push(i.1.ch.limits.clone());
-            }
-            true
-        });
 
         let min_value = chunk_header.limits.min.clone().unwrap();
         let mk = MinKey::new(chunk_header.ty, min_value);
@@ -207,7 +216,6 @@ impl ChunkHeaderIndex {
     }
     pub fn reset_limits(&mut self, ty: u64, old_min: TypeData, new_limit: Range<TypeData>) {
         let mk = MinKey::new(ty, old_min);
-        // debug_assert_eq!(self.0.range(mk..=mk).filter(|a| a.1.ch.ty == ty).count(), 1);
         let mut prev = self.0.remove(&mk).unwrap();
         prev.ch.limits = new_limit;
         self.push(prev.location, prev.ch);
@@ -220,14 +228,14 @@ impl ChunkHeaderIndex {
         // Since we're changing the lower bound, have to reindex in CH (as that btree is sorted by lower bound)
         if x.0.pkey > pkey {
             let mut new_limit = x.1.ch.limits.clone();
-            new_limit.add(pkey);
+            new_limit.add(&pkey);
             let mut value = self.0.remove(&x0).unwrap();
             value.ch.limits = new_limit.clone();
             let mk = MinKey::new(ty, new_limit.min.unwrap());
             self.0.insert(mk, value);
         } else if !x.1.ch.limits.overlaps(&(&pkey..=&pkey)) {
             // Just update the value
-            x.1.ch.limits.add(pkey);
+            x.1.ch.limits.add(&pkey);
         }
     }
 }

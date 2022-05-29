@@ -5,7 +5,7 @@ use std::option::Option::None;
 
 use chunk_header::ChunkHeaderIndex;
 use table_base::read_to_buf;
-use table_base2::TableBase2;
+use table_base2::{TableBase2, TableType};
 use {ChunkHeader, FromReader};
 use dynamic_tuple::TypeData;
 
@@ -14,7 +14,6 @@ pub struct PageSerializer<W: Read + Write + Seek> {
     pub file: W,
     pub previous_headers: ChunkHeaderIndex,
     deleted: Vec<(u64, u64)>,
-    pinned: HashSet<u64>,
     pub cache: HashMap<u64, TableBase2>,
     constant_size: Option<u64>,
 }
@@ -154,7 +153,6 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
             file: w,
             previous_headers: ch,
             deleted,
-            pinned: Default::default(),
             cache: Default::default(),
             constant_size,
         }
@@ -217,28 +215,27 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
             deleted: Vec::new(),
             file: w,
             previous_headers: ChunkHeaderIndex::default(),
-            pinned: Default::default(),
             cache: Default::default(),
             constant_size,
         }
     }
-    pub fn load_page_cached(&mut self, p: u64) -> &mut TableBase2 {
+    pub fn  load_page_cached(&mut self, p: u64) -> &mut TableBase2 {
         const BPOOLSIZE: usize = 5000;
         if self.cache.len() >= BPOOLSIZE {
             let mut unload_count = self.cache.len() - BPOOLSIZE;
-            let keys: Vec<_> = self.cache.keys().cloned().collect();
-            for k in keys {
+
+            let mut to_unload = Vec::new();
+            for k in self.cache.keys() {
                 if unload_count == 0 {
                     break;
                 }
-                if !self.pinned.contains(&k) && k != p {
-                    self.unload_page(k);
+                if *k != p {
+                    to_unload.push(*k);
                     unload_count -= 1;
                 }
             }
+            to_unload.iter().for_each(|k| self.unload_page(*k));
         }
-
-        self.pinned.insert(p);
 
         let file = &mut self.file;
         let table = self.cache.entry(p).or_insert_with(|| {
@@ -268,15 +265,14 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
     }
 
     pub fn move_file(&mut self) -> W
-    where
-        W: Default,
+        where
+            W: Default,
     {
         self.unload_all();
         self.previous_headers.0.clear();
         std::mem::take(&mut self.file)
     }
     fn unload_page(&mut self, p: u64) {
-        println!("Unloading page {p}");
         let mut page = self.cache.remove(&p).unwrap();
         if page.dirty {
             page.force_flush(self);
@@ -296,11 +292,7 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
         for i in keys {
             self.unload_page(i);
         }
-        assert!(self.pinned.is_empty());
         self.file.flush().unwrap();
-    }
-    pub fn unpin_page(&mut self, page: u64) {
-        assert!(self.pinned.remove(&page));
     }
 
     pub fn get_in_all_insert(&self, ty: u64, pkey: TypeData) -> Option<u64> {
@@ -353,7 +345,7 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
         Self::file_get_page(&mut self.file, position)
     }
 
-    pub fn get_in_all(&self, ty: u64, r: Option<TypeData>) -> impl DoubleEndedIterator<Item = u64> + '_ {
+    pub fn get_in_all(&self, ty: u64, r: Option<TypeData>) -> impl DoubleEndedIterator<Item=u64> + '_ {
         let candidate_pages = self
             .previous_headers
             // TODO(hn): r::MAX, r::MIN
@@ -372,16 +364,6 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
     }
 }
 
-impl<W: Read + Write + Seek> Drop for PageSerializer<W> {
-    fn drop(&mut self) {
-        // assert!(
-        //     self.pinned.is_empty(),
-        //     "Failed to unpin pages: {:?}",
-        //     self.pinned
-        // );
-        // self.unload_all()
-    }
-}
 
 #[test]
 fn serializer_works() {
@@ -398,10 +380,11 @@ fn serializer_works() {
             max: Some(TypeData::Int(0)),
         },
         compressed_size: 0,
+        table_type: TableType::Data,
     };
     let mut ps = PageSerializer::default();
-    ps.add_page(vec![0, 1, 2, 3, 4, 5],  default_ch.clone());
-    ps.add_page(vec![5, 6, 9, 1, 2, 3],  default_ch);
+    ps.add_page(vec![0, 1, 2, 3, 4, 5], default_ch.clone());
+    ps.add_page(vec![5, 6, 9, 1, 2, 3], default_ch);
 
     let mut f = std::mem::take(&mut ps.file);
     f.set_position(0);
@@ -426,6 +409,7 @@ fn delete_works() {
                 max: Some(TypeData::Int(3)),
             },
             compressed_size: 0,
+            table_type: TableType::Data,
         },
     );
 

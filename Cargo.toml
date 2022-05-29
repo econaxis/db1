@@ -14,7 +14,7 @@ superslice = "*"
 [dev-dependencies]
 
 [profile.release]
-debug = false
+debug = true
 opt-level = 3
 
 [profile.bench]
@@ -26,6 +26,7 @@ debug = 1
 path="src/c_lib.rs"
 name = "db2"
 crate-type = ["cdylib"]
+
 
 [workspace]
 
