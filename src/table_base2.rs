@@ -132,7 +132,6 @@ Get from all     - seek out all pages with specific ID, matching range
 impl TableBase2 {
     const TABLEBASE2: u64 = 0xf6c4f2fcf200310e;
     pub fn new(ty: u64, type_size: usize, table_type: TableType) -> Self {
-        assert_eq!(table_type, TableType::Index(Type::String));
         Self {
             ty,
             data: Vec::with_capacity(16000),
@@ -165,7 +164,6 @@ impl TableBase2 {
         }
     }
     pub fn load_pkey(&self, ind: usize, load_level: u8) -> TypeData {
-        assert_eq!(self.table_type, TableType::Index(Type::String));
         match self.table_type {
             TableType::Data | TableType::Index(Type::Int) => TypeData::Int(u64::from_le_bytes(self.data[ind..ind + 8].try_into().unwrap())),
             TableType::Index(Type::String) => {
@@ -289,7 +287,9 @@ impl TableBase2 {
                 (&mut new_heap, &mut new_range)
             };
 
+            // TODO(05-29): don't add every single time to avoid performance penalty
             used_range.add(&self.load_pkey(i, 2));
+
             // We're reading the tuple and then spitting it back out again to fix the indexes on Db1String
             let tuple = splitter.read_tuple(
                 &self.data[i..i + self.type_size],

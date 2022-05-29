@@ -6,8 +6,10 @@ use std::ffi::{CStr, CString};
 use std::fmt::{Debug, Write as OW};
 use std::fs::File;
 use std::io::{Cursor, Read, Seek, Write};
+use std::iter::Scan;
 use std::option::Option::None;
 use std::os::raw::c_char;
+use std::ptr::eq;
 use std::sync::Once;
 use std::time::Instant;
 
@@ -19,7 +21,7 @@ use table_base::read_to_buf;
 use table_base2::{TableBase2, TableType};
 use ::{FromReader, serializer};
 use {BytesSerialize, SuitableDataType};
-use dynamic_tuple::SQL::Insert;
+use dynamic_tuple::SQL::{Insert};
 
 use crate::query_data::QueryData;
 
@@ -60,6 +62,8 @@ impl PartialOrd for TypeData {
             (TypeData::Null, TypeData::Null) => Some(Ordering::Equal),
             (TypeData::Null, other) => Some(Ordering::Less),
             (self_, TypeData::Null) => Some(Ordering::Greater),
+            (TypeData::Int(u64::MAX), _) => Some(Ordering::Greater),
+            (_, TypeData::Int(u64::MAX)) => Some(Ordering::Less),
             _ => panic!("Invalid comparison between {:?} {:?}", self, other)
         };
         result
@@ -178,6 +182,9 @@ impl TupleBuilder {
             _ => panic!("{:?}", self),
         }
     }
+    pub fn extract(&self, ind: usize) -> &TypeData {
+        &self.fields[ind]
+    }
     pub fn add_int(mut self, i: u64) -> Self {
         self.fields.push(TypeData::Int(i));
         self
@@ -295,8 +302,14 @@ impl DynamicTuple {
 // }
 
 struct NamedTables {
-    tables: HashMap<String, TypedTable>,
+    pub tables: HashMap<String, TypedTable>,
     largest_id: u64,
+}
+
+#[derive(Clone, Debug)]
+struct IndexDescriptor {
+    on_column: u64,
+    raw_table: TypedTable,
 }
 
 #[derive(Clone, Debug)]
@@ -304,6 +317,7 @@ pub struct TypedTable {
     ty: DynamicTuple,
     pub(crate) id_ty: u64,
     column_map: HashMap<String, u32>,
+    attached_indices: Vec<IndexDescriptor>
 }
 
 pub trait RWS = Read + Write + Seek;
@@ -315,12 +329,12 @@ pub struct TableCursor<'a, 'b, W: RWS> {
     // current_tuples: Vec<TupleBuilder>,
     current_index: u64,
     end_index_exclusive: u64,
-    pkey: Option<u64>,
+    pkey: Option<TypeData>,
     load_columns: u64,
 }
 
 impl<'a, 'b, W: RWS> TableCursor<'a, 'b, W> {
-    fn new(locations: Vec<u64>, ps: &'a mut PageSerializer<W>, ty: &'b DynamicTuple, pkey: Option<u64>, load_columns: u64) -> Self {
+    fn new(locations: Vec<u64>, ps: &'a mut PageSerializer<W>, ty: &'b DynamicTuple, pkey: Option<TypeData>, load_columns: u64) -> Self {
         let mut se = Self {
             locations,
             ps,
@@ -338,9 +352,9 @@ impl<'a, 'b, W: RWS> TableCursor<'a, 'b, W> {
     fn reset_index_iterator(&mut self) {
         // Reload the index iterator for the new table
         let table = self.ps.load_page_cached(*self.locations.last().unwrap());
-        let range = if let Some(pk) = self.pkey {
+        let range = if let Some(pk) = &self.pkey {
             println!("Using get_ranges");
-            table.get_ranges(TypeData::Int(pk)..=TypeData::Int(pk))
+            table.get_ranges(pk..=pk)
         } else {
             println!("Using inefficient table scan");
             (0..table.len())
@@ -367,6 +381,7 @@ impl<W: RWS> Iterator for TableCursor<'_, '_, W> {
             Some(tuple)
         } else {
             if self.locations.len() > 1 {
+                self.locations.pop().unwrap();
                 self.reset_index_iterator();
                 self.next()
             } else if self.locations.len() == 1 {
@@ -379,8 +394,59 @@ impl<W: RWS> Iterator for TableCursor<'_, '_, W> {
 }
 
 
+#[derive(Default)]
+struct SecondaryIndices {
+    indices: Vec<IndexDescriptor>
+}
+
+#[test]
+fn secondaryindices_works() {
+    let mut ps = PageSerializer::default();
+    let ps = &mut ps;
+    let mut nt = NamedTables::new(ps);
+
+    let mut si = SecondaryIndices::default();
+    si.append_secondary_index(ps, &mut nt, "SI", Type::String, Type::Int, 1);
+
+    si.store(ps, TupleBuilder::default().add_int(3).add_string("Hello"));
+    si.store(ps, TupleBuilder::default().add_int(1).add_string("Worlde"));
+    dbg!(si.query(ps, 1, TypeData::String("Hello".into())));
+    dbg!(si.query(ps, 1, TypeData::String("Worlde".into())));
+}
+impl SecondaryIndices {
+    fn append_secondary_index<W: RWS>(&mut self, ps: &mut PageSerializer<W>, nt: &mut NamedTables, name: &str, value_ty: Type, pkey_ty: Type, on_column: u64) {
+        let cr = CreateTable {
+            tbl_name: name.to_string(),
+            fields: vec![("value".to_string(),value_ty), ("row".to_string(), pkey_ty) ]
+        };
+        nt.insert_table(cr,ps);
+
+        let raw_table=  nt.tables.get(name).unwrap().clone();
+        self.indices.push(IndexDescriptor {
+            on_column,
+            raw_table
+        })
+    }
+    fn store<W: RWS>(&mut self, ps: &mut PageSerializer<W>, tuple: TupleBuilder) {
+        let pkey = tuple.first_v2().clone();
+        for indice in &self.indices {
+            let indexed_col = tuple.extract(indice.on_column as usize).clone();
+            let index_tuple = TupleBuilder{
+                fields: vec![indexed_col, pkey.clone()]
+            };
+            indice.raw_table.store_raw(index_tuple, ps);
+        }
+    }
+
+    fn query<W: RWS>(&self, ps: &mut PageSerializer<W>, column: u64, equal: TypeData) -> Vec<TypeData> {
+        let ind = self.indices.iter().filter(|a| a.on_column == column).next().expect("Column is not indexed");
+        let table_iter = ind.raw_table.get_in_all_iter(Some(equal), u64::MAX, ps);
+        table_iter.map(|a| a.extract(1).clone()).collect()
+    }
+}
+
 impl TypedTable {
-    pub fn get_in_all_iter<'a, W: RWS>(&self, pkey: Option<u64>, load_columns: u64, ps: &'a mut PageSerializer<W>) -> TableCursor<'a, '_, W> {
+    pub fn get_in_all_iter<'a, W: RWS>(&self, pkey: Option<TypeData>, load_columns: u64, ps: &'a mut PageSerializer<W>) -> TableCursor<'a, '_, W> {
         let location_iter = Box::new(ps.get_in_all(self.id_ty, None));
         TableCursor::new(location_iter.rev().collect(), ps, &self.ty, pkey, load_columns)
     }
@@ -428,8 +494,8 @@ impl TypedTable {
                 x.force_flush(ps);
             }
         }
-
     }
+
 
     pub(crate) fn new<W: Write + Read + Seek>(
         ty: DynamicTuple,
@@ -448,6 +514,7 @@ impl TypedTable {
                 .enumerate()
                 .map(|(ind, a)| (a.into(), ind as u32))
                 .collect(),
+            attached_indices: Default::default()
         }
     }
 }
@@ -864,7 +931,7 @@ fn typed_table_test() {
 
     for i in (30..=90).rev() {
         assert_eq!(
-            tt.get_in_all_iter(Some(i), 0, &mut ps).collect::<Vec<_>>(),
+            tt.get_in_all_iter(Some(TypeData::Int(i)), 0, &mut ps).collect::<Vec<_>>(),
             vec![TupleBuilder::default()
                 .add_int(i)
                 .add_string(format!("hello{i}"))
@@ -873,7 +940,7 @@ fn typed_table_test() {
             i
         );
         assert_eq!(
-            tt1.get_in_all_iter(Some(i), 0, &mut ps).collect::<Vec<_>>(),
+            tt1.get_in_all_iter(Some(TypeData::Int(i)), 0, &mut ps).collect::<Vec<_>>(),
             vec![TupleBuilder::default()
                 .add_int(i)
                 .add_string(format!("tb1{i}"))]
@@ -906,14 +973,14 @@ fn onehundred_typed_tables() {
     let mut ps1 = PageSerializer::create_from_reader(ps.file.clone(), None);
     for i in (0..2000).rev() {
         assert_eq!(
-            tables[i % 100].get_in_all_iter(Some(i as u64), 0, &mut ps).collect::<Vec<_>>(),
+            tables[i % 100].get_in_all_iter(Some(TypeData::Int(i as u64)), 0, &mut ps).collect::<Vec<_>>(),
             vec![TupleBuilder::default()
                 .add_int(i as u64)
                 .add_string(format!("hello{i}"))
                 .add_string(format!("world{i}"))]
         );
         assert_eq!(
-            tables[i % 100].get_in_all_iter(Some(i as u64), 0, &mut ps1).collect::<Vec<_>>(),
+            tables[i % 100].get_in_all_iter(Some(TypeData::Int(i as u64)), 0, &mut ps1).collect::<Vec<_>>(),
             vec![TupleBuilder::default()
                 .add_int(i as u64)
                 .add_string(format!("hello{i}"))
@@ -932,6 +999,7 @@ impl NamedTables {
             },
             id_ty: 2,
             column_map: Default::default(),
+            attached_indices: Default::default()
         };
 
         let mut tables = HashMap::new();
@@ -952,6 +1020,7 @@ impl NamedTables {
                     ty: DynamicTuple::default(),
                     column_map: Default::default(),
                     id_ty: id,
+                    attached_indices: Default::default()
                 });
             println!("Adding column {} {}", table_name, column_name);
             r.column_map
@@ -1037,7 +1106,7 @@ impl NamedTables {
         let results: Vec<_> = match filter.first() {
             Some(Filter::Equals(colname, TypeData::Int(icomp))) => {
                 match table.column_map[colname] {
-                    0 => table.get_in_all_iter(Some(*icomp), col_mask, ps).collect(),
+                    0 => table.get_in_all_iter(Some(TypeData::Int(*icomp)), col_mask, ps).collect(),
                     colindex => {
                         println!("Warning: using inefficient table scan");
                         let mut query_result = table.get_in_all_iter(None, col_mask, ps);
@@ -1552,11 +1621,3 @@ impl FromReader for DynamicTupleInstance {
         se
     }
 }
-//
-// gen_suitable_data_type_impls!(DynamicTupleInstance);
-// impl SuitableDataType for DynamicTupleInstance {
-//     fn first(&self) -> u64 {
-//         panic!("First not supported on DynamicTupleInstance")
-//         u64::from_le_bytes(self.data[0..8].try_into().unwrap())
-//     }
-// }
