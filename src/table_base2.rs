@@ -142,10 +142,17 @@ impl TableBase2 {
             compressed_size: 0,
         }
     }
-    pub fn load_pkey(&self, ind: usize) -> TypeData {
+    pub fn load_pkey(&self, ind: usize, for_comparison: bool) -> TypeData {
         match self.table_type {
             TableType::Data | TableType::Index(Type::Int) => TypeData::Int(u64::from_le_bytes(self.data[ind..ind + 8].try_into().unwrap())),
-            TableType::Index(Type::String) => TypeData::String(Db1String::from_reader_and_heap(&self.data[ind..], self.heap.as_slice()).to_ptr(self.heap.as_slice()))
+            TableType::Index(Type::String) => {
+                let str = Db1String::from_reader_and_heap(&self.data[ind..], self.heap.as_slice());
+                if for_comparison {
+                    TypeData::String(str.to_ptr(self.heap.as_slice()))
+                } else {
+                    TypeData::String(str)
+                }
+            }
         }
     }
     pub fn load_value(&self, ind: usize) -> &[u8] {
@@ -167,28 +174,6 @@ impl TableBase2 {
         self.heap.len()
     }
 
-    fn cmp_pkey(&self, ind: usize, value: &TypeData) -> Ordering {
-        self.load_pkey(ind).partial_cmp(&value).unwrap()
-        // match (&self.table_type, value) {
-        //     (TableType::Data, TypeData::Int(int)) => {
-        //         self.load_pkey(ind).cmp(&int)
-        //     }
-        //     (TableType::Index(Type::Int), TypeData::Int(int)) => {
-        //         let td = DynamicTuple::new(vec![Type::Int, Type::Int, Type::Int]);
-        //         let bytes = self.load_index(ind);
-        //         let tup = td.read_tuple(bytes, 0, self.heap.as_slice());
-        //         tup.extract_int(1).cmp(&int)
-        //     }
-        //     (TableType::Index(Type::String), TypeData::String(str)) => {
-        //         let td = DynamicTuple::new(vec![Type::Int, Type::String, Type::Int]);
-        //         let bytes = self.load_index(ind);
-        //         let tup = td.read_tuple(bytes, 0, self.heap.as_slice());
-        //         tup.extract_string(1).cmp(str.as_buffer())
-        //     }
-        //     _ => panic!("Invalid configuration")
-        // }
-    }
-
     // Code gotten from `superslice` crate
     fn lower_bound(&self, key: &TypeData) -> u64 {
         let mut size = self.len() as usize;
@@ -199,13 +184,15 @@ impl TableBase2 {
         while size > 1 {
             let half = size / 2;
             let mid = base + half;
-            let cmp = self.cmp_pkey(mid * self.type_size, key);
+            let cmp = self.load_pkey(mid * self.type_size, true).cmp(key);
             base = if cmp == Ordering::Less { mid } else { base };
             size -= half;
         }
-        let cmp = self.cmp_pkey(base * self.type_size, key);
+        let cmp = self.load_pkey(base * self.type_size, true).cmp(key);
         base as u64 + (cmp == Ordering::Less) as u64
     }
+
+    // Code gotten from `superslice` crate
     fn upper_bound(&self, key: &TypeData) -> u64 {
         let mut size = self.len() as usize;
         if size == 0 {
@@ -215,11 +202,11 @@ impl TableBase2 {
         while size > 1 {
             let half = size / 2;
             let mid = base + half;
-            let cmp = self.cmp_pkey(mid * self.type_size, key);
+            let cmp = self.load_pkey(mid * self.type_size, true).cmp(key);
             base = if cmp == Ordering::Greater { base } else { mid };
             size -= half;
         }
-        let cmp = self.cmp_pkey(base * self.type_size, key);
+        let cmp = self.load_pkey(base * self.type_size, true).cmp(key);
         base as u64 + (cmp != Ordering::Greater) as u64
     }
     // Returns the index which is larger or equals to a
@@ -240,14 +227,14 @@ impl TableBase2 {
             .copy_within(position..len, position + self.type_size);
         self.data[position..position + self.type_size].copy_from_slice(&inst.data[0..self.type_size]);
 
-        self.limits.add(t.first_v2().clone());
+        self.limits.add(t.first_v2());
     }
 
 
     fn find_split_point(&self, mut v: usize) -> usize {
         assert!(v >= 1);
         while v < self.len() as usize
-            && self.load_pkey(v * self.type_size) == self.load_pkey((v - 1) * self.type_size)
+            && self.load_pkey(v * self.type_size, true) == self.load_pkey((v - 1) * self.type_size, true)
         {
             v += 1;
         }
@@ -285,7 +272,7 @@ impl TableBase2 {
 
             assert_eq!(new_tuple.len, self.type_size);
             self.data[i..i + self.type_size].copy_from_slice(&new_tuple.data[0..self.type_size]);
-            used_range.add(self.load_pkey(i));
+            used_range.add(&self.load_pkey(i, false));
         }
 
         self.heap = new_heap;
@@ -321,7 +308,7 @@ impl TableBase2 {
 
         let mut buf: Cursor<Vec<u8>> = Cursor::default();
         let ch = self.chunk_header();
-        ch.serialize_with_heap(&mut buf, InvalidWriter);
+        ch.serialize_with_heap(&mut buf, self.heap_mut());
 
         buf.write_all(&self.data).unwrap();
         buf.write_all(self.heap.0.get_ref()).unwrap();
@@ -354,7 +341,7 @@ impl TableBase2 {
         let mut range = self.get_ranges(&value..=&value);
         for location in range {
             let index = location as usize * self.type_size;
-            if index + 8 >= self.data.len() || self.load_pkey(index) != value {
+            if index + 8 >= self.data.len() || self.load_pkey(index, true) != value {
                 break;
             }
             ans.push(&self.data[index..index + self.type_size]);
@@ -523,4 +510,5 @@ fn test_index_type_table(){
     dbg!(table.get_ranges(TypeData::String("A".into())..TypeData::String("Cf".into())));
     dbg!(table.get_ranges(TypeData::String("A".into())..TypeData::String("Ma".into())));
     dbg!(table.get_ranges(TypeData::String("A".into())..TypeData::String("Mez".into())));
+    dbg!(table.get_ranges(TypeData::String("N".into())..TypeData::String("Rz".into())));
 }

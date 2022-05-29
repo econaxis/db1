@@ -83,12 +83,12 @@ impl Range<TypeData> {
     }
 
     // Adds new element to the range, potentially expanding the min and max extrema
-    pub fn add(&mut self, new_elt: TypeData) {
-        if Self::check_else_true(Some(&new_elt), self.min.as_ref(), |new, min| new < min) {
+    pub fn add(&mut self, new_elt: &TypeData) {
+        if Self::check_else_true(Some(new_elt), self.min.as_ref(), |new, min| new < min) {
             self.min = Some(new_elt.clone());
         }
-        if Self::check_else_true(Some(&new_elt), self.max.as_ref(), |new, max| new > max) {
-            self.max = Some(new_elt);
+        if Self::check_else_true(Some(new_elt), self.max.as_ref(), |new, max| new > max) {
+            self.max = Some(new_elt.clone());
         }
     }
 }
