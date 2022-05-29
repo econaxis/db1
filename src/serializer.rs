@@ -8,6 +8,7 @@ use table_base::read_to_buf;
 use table_base2::{TableBase2, TableType};
 use {ChunkHeader, FromReader};
 use dynamic_tuple::TypeData;
+use serializer;
 
 #[derive(Debug)]
 pub struct PageSerializer<W: Read + Write + Seek> {
@@ -21,7 +22,7 @@ pub struct PageSerializer<W: Read + Write + Seek> {
 
 impl Default for PageSerializer<Cursor<Vec<u8>>> {
     fn default() -> Self {
-        Self::create(Cursor::default(), Some(16000))
+        Self::create(Cursor::default(), Some(serializer::MAX_PAGE_SIZE))
     }
 }
 
@@ -70,14 +71,17 @@ impl<'a, W> Debug for PageResult<'a, W> {
     }
 }
 
+pub(crate) const MAX_PAGE_SIZE: u64 = 16000;
+
 impl<W: Write + Read + Seek> PageSerializer<W> {
     const CHECK_SEQ: u64 = 3180343028731803290;
     const WORKING_PAGE: u16 = 31920;
     const PAGEOVERHEAD: u64 = 6;
     const DELETED_PAGE: u16 = 21923;
 
+
     pub fn maximum_serialized_len(&self) -> usize {
-        self.constant_size.unwrap_or(16000) as usize
+        self.constant_size.unwrap_or(MAX_PAGE_SIZE) as usize
     }
     pub fn replace_inner(&mut self, w: W) -> W {
         std::mem::replace(&mut self.file, w)

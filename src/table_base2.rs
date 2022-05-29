@@ -15,6 +15,7 @@ use table_base::read_to_buf;
 use ::{BytesSerialize, Db1String};
 use {ChunkHeader, Range};
 use {FromReader};
+use serializer;
 
 #[derive(PartialEq, Debug, Copy, Clone)]
 pub enum TableType {
@@ -386,8 +387,8 @@ impl FromReader for TableBase2 {
         let mut heap = vec![0u8; heap_size as usize];
 
         // Make capacity at least 16000 (as that is estimated page size)
-        data.reserve(data.len().saturating_sub(16000));
-        heap.reserve(heap.len().saturating_sub(16000));
+        data.reserve(data.len().saturating_sub(serializer::MAX_PAGE_SIZE as usize));
+        heap.reserve(heap.len().saturating_sub(serializer::MAX_PAGE_SIZE as usize));
 
         r.read_exact(&mut data).unwrap();
         r.read_exact(&mut heap).unwrap();

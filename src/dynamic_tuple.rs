@@ -17,7 +17,7 @@ use ::{gen_suitable_data_type_impls, slice_from_type};
 use serializer::PageSerializer;
 use table_base::read_to_buf;
 use table_base2::{TableBase2, TableType};
-use FromReader;
+use ::{FromReader, serializer};
 use {BytesSerialize, SuitableDataType};
 use dynamic_tuple::SQL::Insert;
 
@@ -1068,7 +1068,7 @@ impl NamedTables {
 
 #[test]
 fn test_sql_all() {
-    let mut ps = PageSerializer::create(Cursor::new(Vec::new()), Some(16000));
+    let mut ps = PageSerializer::create(Cursor::new(Vec::new()), Some(serializer::MAX_PAGE_SIZE));
     let mut nt = NamedTables::new(&mut ps);
 
     parse_lex_sql(
@@ -1127,7 +1127,7 @@ fn test_sql_all() {
         .results();
     dbg!(&answer1, &answer2);
 
-    let mut ps = PageSerializer::create_from_reader(ps.move_file(), Some(16000));
+    let mut ps = PageSerializer::create_from_reader(ps.move_file(), Some(serializer::MAX_PAGE_SIZE));
     let mut nt = NamedTables::new(&mut ps);
     assert_eq!(
         parse_lex_sql(
@@ -1163,7 +1163,7 @@ fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
         .write(true)
         .open("/tmp/test_selects")
         .unwrap();
-    let mut ps = PageSerializer::create(file, Some(16000));
+    let mut ps = PageSerializer::create(file, Some(serializer::MAX_PAGE_SIZE));
     let mut nt = NamedTables::new(&mut ps);
 
     parse_lex_sql(
@@ -1212,7 +1212,7 @@ fn test_inserts() {
         .write(true)
         .open("/tmp/test-inserts")
         .unwrap();
-    let mut ps = PageSerializer::create(file, Some(16000));
+    let mut ps = PageSerializer::create(file, Some(serializer::MAX_PAGE_SIZE));
     let mut nt = NamedTables::new(&mut ps);
 
     parse_lex_sql(
