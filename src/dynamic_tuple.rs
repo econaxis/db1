@@ -39,17 +39,19 @@ impl From<u64> for Type {
     }
 }
 
-#[derive(Debug,Eq, Clone)]
+#[derive(Debug, Eq, Clone)]
 pub enum TypeData {
     Int(u64),
     String(Db1String),
     Null,
 }
+
 impl Ord for TypeData {
     fn cmp(&self, other: &Self) -> Ordering {
         self.partial_cmp(other).unwrap()
     }
 }
+
 impl PartialOrd for TypeData {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         let a = format!("{self:?} {other:?}");
@@ -58,26 +60,24 @@ impl PartialOrd for TypeData {
             (TypeData::String(x), TypeData::String(y)) => x.partial_cmp(y),
             (TypeData::Null, TypeData::Null) => Some(Ordering::Equal),
             (TypeData::Null, other) => Some(Ordering::Less),
-            (self_,TypeData::Null) => Some(Ordering::Greater),
+            (self_, TypeData::Null) => Some(Ordering::Greater),
             _ => panic!("Invalid comparison between {:?} {:?}", self, other)
         };
-        println!("Comparing {a} = {result:?}");
         result
     }
 }
+
 impl PartialEq for TypeData {
     fn eq(&self, other: &Self) -> bool {
-        println!("Equaling {self:?} {other:?}");
-
         match (self, other) {
             (TypeData::Int(x), TypeData::Int(y)) => x.eq(y),
-                (TypeData::String(x), TypeData::String(y)) => x.eq(y),
-                (TypeData::Null, TypeData::Null) => true,
+            (TypeData::String(x), TypeData::String(y)) => x.eq(y),
+            (TypeData::Null, TypeData::Null) => true,
             _ => false,
-            // _ => panic!("Invalid comparison between {:?} {:?}", self, other)
         }
     }
 }
+
 impl TypeData {
     const INT_TYPE: u8 = 1;
     const STRING_TYPE: u8 = 2;
@@ -90,6 +90,7 @@ impl TypeData {
         }
     }
 }
+
 impl FromReader for TypeData {
     fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
         let mut type_code: u8 = 0;
@@ -789,6 +790,16 @@ fn insert_values() {
 }
 
 #[test]
+fn test_index_type_table2() {
+    let mut ps = PageSerializer::default();
+    let mut tt = TypedTable::new(DynamicTuple::new(vec![Type::String, Type::String]), 10, &mut ps, vec!["a", "b"]);
+
+    for i in 0..0_100_000u64 {
+        let ty = TupleBuilder::default().add_string(i.to_string()).add_string((i * 10000).to_string());
+        tt.store_raw(ty, &mut ps);
+    }
+}
+#[test]
 fn typed_table_cursors() {
     let mut ps = PageSerializer::default();
     let tt = TypedTable::new(
@@ -1249,8 +1260,8 @@ fn lots_inserts() {
         let mut now = Instant::now();
         let i = j + 10;
         let insert = InsertValues {
-            values: vec![vec![TypeData::Int(i), TypeData::String(format!("hello{i} world").into()), TypeData::String(format!("{i}").into()), TypeData::String( format!("{desc_string}").into())]],
-            tbl_name: "tbl".to_string()
+            values: vec![vec![TypeData::Int(i), TypeData::String(format!("hello{i} world").into()), TypeData::String(format!("{i}").into()), TypeData::String(format!("{desc_string}").into())]],
+            tbl_name: "tbl".to_string(),
         };
         nt.execute_insert(insert, &mut ps);
     }
