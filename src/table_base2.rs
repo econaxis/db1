@@ -426,7 +426,7 @@ fn works() {
     db.force_flush(&mut ps);
 
     assert!(TypeData::Null < TypeData::Int(32324));
-    let page = ps.get_in_all(19, None).next().unwrap();
+    let page = ps.get_in_all(19, None)[0];
     let page = ps.get_page(page);
 
     let db1 = TableBase2::from_reader_and_heap(page, &[]);
@@ -463,7 +463,7 @@ fn works() {
     f.set_position(0);
 
     let ps1 = PageSerializer::create_from_reader(f, None);
-    assert!(ps1.get_in_all(19, None).next().is_some());
+    assert!(ps1.get_in_all(19, None).first().is_some());
 }
 
 #[test]

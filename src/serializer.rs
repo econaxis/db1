@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::option::Option::None;
+use std::usize;
 
-use chunk_header::ChunkHeaderIndex;
+use chunk_header::{ChunkHeaderIndex, CHValue, MinKey};
 use table_base::read_to_buf;
 use table_base2::{TableBase2, TableType};
 use {ChunkHeader, FromReader};
@@ -300,7 +301,7 @@ impl<W: Write + Read + Seek> PageSerializer<W> {
     }
 
     pub fn get_in_all_insert(&self, ty: u64, pkey: TypeData) -> Option<u64> {
-        let left = self.previous_headers.get_in_one_it(ty, pkey).next_back();
+        let left = self.previous_headers.get_in_one_it(ty, Some(pkey)).next_back();
 
         left.map(|a| a.1.location)
     }
@@ -349,22 +350,31 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
         Self::file_get_page(&mut self.file, position)
     }
 
-    pub fn get_in_all(&self, ty: u64, r: Option<TypeData>) -> impl DoubleEndedIterator<Item=u64> + '_ {
-        let candidate_pages = self
-            .previous_headers
-            // TODO(hn): r::MAX, r::MIN
-            // will never have to compare across types because tables should all have the same time
-            .get_in_one_it(ty, r.clone().unwrap_or(TypeData::Int(u64::MAX)));
 
 
-        candidate_pages.filter_map(move |x| {
+    pub fn get_in_all(&self, ty: u64, r: Option<TypeData>) -> Vec<u64> {
+        #[inline(never)]
+        fn filt(r: &Option<TypeData>, x: (&MinKey, &CHValue)) -> Option<u64> {
             let ch = x.1;
-            if r.is_some() && !ch.ch.limits.overlaps(&(r.clone().unwrap()..=r.clone().unwrap())) {
+            if r.is_some() && !ch.ch.limits.overlaps(&(r.as_ref().unwrap()..=r.as_ref().unwrap())) {
                 None
             } else {
                 Some(ch.location)
             }
-        })
+        }
+        let mut candidate_pages = self
+            .previous_headers
+            // TODO(hn): r::MAX, r::MIN
+            // will never have to compare across types because tables should all have the same time
+            .get_in_one_it(ty, r.clone());
+
+
+        if r.is_some() {
+            candidate_pages.rev().take(1).map(|a| a.1.location).collect()
+        } else {
+            candidate_pages.map(|a| a.1.location).collect()
+        }
+        // candidate_pages.filter_map(move |x| filt(&r, x))
     }
 }
 
@@ -417,10 +427,10 @@ fn delete_works() {
         },
     );
 
-    assert_eq!(ps.get_in_all(0, Some(TypeData::Int(3))).next(), Some(loc));
+    assert_eq!(ps.get_in_all(0, Some(TypeData::Int(3))).first(), Some(&loc));
     ps.free_page(0, TypeData::Int(3));
-    assert_eq!(ps.get_in_all(0, Some(TypeData::Int(3))).next(), None);
+    assert_eq!(ps.get_in_all(0, Some(TypeData::Int(3))).first(), None);
 
     let ps1 = PageSerializer::create_from_reader(std::mem::take(&mut ps.file), None);
-    assert_eq!(ps1.get_in_all(0, Some(TypeData::Int(3))).next(), None);
+    assert_eq!(ps1.get_in_all(0, Some(TypeData::Int(3))).first(), None);
 }

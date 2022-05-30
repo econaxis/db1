@@ -24,7 +24,7 @@ impl BytesSerialize for ChunkHeader {
             tuple_count: self.tuple_count,
             heap_size: self.heap_size,
             compressed_size: self.compressed_size,
-            table_type: self.table_type.to_u8()
+            table_type: self.table_type.to_u8(),
         };
         w.write_all(slice_from_type(&mut rc)).unwrap();
 
@@ -47,7 +47,7 @@ pub struct ChunkHeader {
     pub heap_size: u32,
     pub limits: Range<TypeData>,
     pub compressed_size: u32,
-    pub table_type: TableType
+    pub table_type: TableType,
 }
 
 #[derive(Default, Debug)]
@@ -60,7 +60,7 @@ struct ReadContainer {
     tuple_count: u32,
     heap_size: u32,
     compressed_size: u32,
-    table_type: u8
+    table_type: u8,
 }
 
 pub fn slice_from_type<T: Sized>(t: &mut T) -> &mut [u8] {
@@ -95,11 +95,10 @@ impl FromReader for Option<ChunkHeader> {
             tuple_count: rc.tuple_count,
             heap_size: rc.heap_size,
             compressed_size: rc.compressed_size,
-            table_type: TableType::from_u8(rc.table_type)
+            table_type: TableType::from_u8(rc.table_type),
         })
     }
 }
-
 
 
 impl ChunkHeader {
@@ -137,7 +136,7 @@ impl Default for CHValue {
                 heap_size: 0,
                 limits: Default::default(),
                 compressed_size: 0,
-                table_type: TableType::Data
+                table_type: TableType::Data,
             },
             location: 0,
         }
@@ -191,10 +190,17 @@ impl ChunkHeaderIndex {
         location
     }
 
-    pub fn get_in_one_it(&self, ty: u64, pkey: TypeData) -> impl DoubleEndedIterator<Item=(&MinKey, &CHValue)> {
-        let mk = MinKey::new(ty, pkey);
-        let left = self.0.range(mk.start_ty()..=mk);
-        left
+    pub fn get_in_one_it<'a>(&'a self, ty: u64, pkey: Option<TypeData>) -> impl DoubleEndedIterator<Item=(&'a MinKey, &'a CHValue)> {
+        if let Some(pkey) = pkey {
+            let mk = MinKey::new(ty, pkey);
+            let left = self.0.range(mk.start_ty()..=mk);
+            left
+        } else {
+            let mk = MinKey::new(ty, TypeData::Null);
+            let mk_next = MinKey::new(ty + 1, TypeData::Null);
+            let left = self.0.range(mk.start_ty()..mk_next);
+            left
+        }
     }
     pub fn get_in_one_mut(&mut self, ty: u64, pkey: TypeData) -> impl DoubleEndedIterator<Item=(&MinKey, &mut CHValue)> {
         let mk = MinKey::new(ty, pkey);
@@ -203,7 +209,6 @@ impl ChunkHeaderIndex {
     }
 
     pub fn push(&mut self, pos: u64, chunk_header: ChunkHeader) {
-
         let min_value = chunk_header.limits.min.clone().unwrap();
         let mk = MinKey::new(chunk_header.ty, min_value);
         self.0.insert(

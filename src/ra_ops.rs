@@ -45,7 +45,7 @@ fn test_where_operator() {
         vec!["id", "name", "content"],
     );
     let mut i = 0;
-    while ps.get_in_all(tt.id_ty, None).count() < 2 {
+    while ps.get_in_all(tt.id_ty, None).len() < 2 {
         i += 1;
         let tb = TupleBuilder::default()
             .add_int(i)
