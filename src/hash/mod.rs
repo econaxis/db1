@@ -2,10 +2,10 @@ use std::collections::hash_map::{DefaultHasher, Entry};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Seek, SeekFrom, Write};
-use Range;
+
 
 use crate::{
-    from_reader, gen_suitable_data_type_impls, BytesSerialize, ChunkHeader, FromReader,
+    from_reader, gen_suitable_data_type_impls, BytesSerialize,
     SuitableDataType,
 };
 

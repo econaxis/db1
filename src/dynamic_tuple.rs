@@ -1,27 +1,28 @@
 use std::cell::Cell;
-use std::cmp::{max, Ordering};
+use std::cmp::{Ordering};
 use std::collections::HashMap;
-use std::convert::TryInto;
+
 use std::ffi::{CStr, CString};
 use std::fmt::{Debug, Write as OW};
 use std::fs::File;
 use std::io::{Cursor, Read, Seek, Write};
-use std::iter::Scan;
+
 use std::option::Option::None;
 use std::os::raw::c_char;
-use std::ptr::eq;
+
 use std::sync::Once;
-use std::time::Instant;
+
 
 use db1_string::Db1String;
 use dynamic_tuple::TypeData::Null;
-use ::{gen_suitable_data_type_impls, slice_from_type};
+use ::{slice_from_type};
 use serializer::PageSerializer;
 use table_base::read_to_buf;
 use table_base2::{TableBase2, TableType};
-use ::{FromReader, serializer};
+use ::{FromReader};
 use {BytesSerialize, SuitableDataType};
-use dynamic_tuple::SQL::{Insert};
+use serializer;
+
 
 use crate::query_data::QueryData;
 
@@ -60,8 +61,8 @@ impl PartialOrd for TypeData {
             (TypeData::Int(x), TypeData::Int(y)) => x.partial_cmp(y),
             (TypeData::String(x), TypeData::String(y)) => x.partial_cmp(y),
             (TypeData::Null, TypeData::Null) => Some(Ordering::Equal),
-            (TypeData::Null, other) => Some(Ordering::Less),
-            (self_, TypeData::Null) => Some(Ordering::Greater),
+            (TypeData::Null, _other) => Some(Ordering::Less),
+            (_self_, TypeData::Null) => Some(Ordering::Greater),
             (TypeData::Int(u64::MAX), _) => Some(Ordering::Greater),
             (_, TypeData::Int(u64::MAX)) => Some(Ordering::Less),
             _ => panic!("Invalid comparison between {:?} {:?}", self, other)
@@ -355,7 +356,7 @@ impl<'a, 'b, W: RWS> TableCursor<'a, 'b, W> {
         let range = if let Some(pk) = &self.pkey {
             table.get_ranges(pk..=pk)
         } else {
-            (0..table.len())
+            0..table.len()
         };
         self.current_index = range.start;
         self.end_index_exclusive = range.end;
@@ -377,16 +378,14 @@ impl<W: RWS> Iterator for TableCursor<'_, '_, W> {
 
             self.current_index += 1;
             Some(tuple)
+        } else if self.locations.len() > 1 {
+            self.locations.pop().unwrap();
+            self.reset_index_iterator();
+            self.next()
+        } else if self.locations.len() == 1 {
+            None
         } else {
-            if self.locations.len() > 1 {
-                self.locations.pop().unwrap();
-                self.reset_index_iterator();
-                self.next()
-            } else if self.locations.len() == 1 {
-                None
-            } else {
-                None
-            }
+            None
         }
     }
 }
@@ -440,7 +439,7 @@ impl SecondaryIndices {
     }
 
     fn query<W: RWS>(&self, ps: &mut PageSerializer<W>, column: u64, equal: TypeData) -> Vec<TypeData> {
-        let ind = self.indices.iter().filter(|a| a.on_column == column).next().expect("Column is not indexed");
+        let ind = self.indices.iter().find(|a| a.on_column == column).expect("Column is not indexed");
         let table_iter = ind.raw_table.get_in_all_iter(Some(equal), u64::MAX, ps);
         table_iter.map(|a| a.extract(1).clone()).collect()
     }
@@ -456,7 +455,7 @@ impl TypedTable {
         assert!(t.type_check(&self.ty));
         let max_page_len = ps.maximum_serialized_len();
         let pkey = t.first_v2().clone();
-        let (location, page) = match ps.get_in_all_insert(self.id_ty, pkey.clone()) {
+        let (_location, page) = match ps.get_in_all_insert(self.id_ty, pkey.clone()) {
             Some(location) => {
                 let page = ps.load_page_cached(location);
                 if !page.limits.overlaps(&(&pkey..=&pkey)) {
@@ -1110,7 +1109,7 @@ impl NamedTables {
                     0 => table.get_in_all_iter(Some(TypeData::Int(*icomp)), col_mask, ps).collect(),
                     colindex => {
                         println!("Warning: using inefficient table scan");
-                        let mut query_result = table.get_in_all_iter(None, col_mask, ps);
+                        let query_result = table.get_in_all_iter(None, col_mask, ps);
 
                         query_result.filter(|i| match i.fields[colindex as usize] {
                             TypeData::Int(int) => int == *icomp,
@@ -1123,7 +1122,7 @@ impl NamedTables {
                 println!("Warning: using inefficient table scan");
 
                 let colindex = table.column_map[colname];
-                let mut qr = table.get_in_all_iter(None, col_mask, ps);
+                let qr = table.get_in_all_iter(None, col_mask, ps);
                 qr.filter(|i| match &i.fields[colindex as usize] {
                     TypeData::String(s1) => s1 == s,
                     _ => panic!(),
@@ -1333,7 +1332,6 @@ fn lots_inserts() {
     indices.shuffle(&mut a);
     let desc_string = String::from_utf8(vec![b'a'; 10]).unwrap();
     for j in indices {
-        let mut now = Instant::now();
         let i = j + 10;
         let insert = InsertValues {
             values: vec![vec![TypeData::Int(i), TypeData::String(format!("hello{i} world").into()), TypeData::String(format!("{i}").into()), TypeData::String(format!("{desc_string}").into())]],

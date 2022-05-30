@@ -1,11 +1,11 @@
-use std::borrow::Borrow;
+
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::io::{Cursor, Read, Seek, Write};
-use dynamic_tuple::{DynamicTuple, TypeData};
+use dynamic_tuple::{TypeData};
 use table_base2::TableType;
-use table_base::read_to_buf;
+
 
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
@@ -193,18 +193,18 @@ impl ChunkHeaderIndex {
     pub fn get_in_one_it<'a>(&'a self, ty: u64, pkey: Option<TypeData>) -> impl DoubleEndedIterator<Item=(&'a MinKey, &'a CHValue)> {
         if let Some(pkey) = pkey {
             let mk = MinKey::new(ty, pkey);
-            let left = self.0.range(mk.start_ty()..=mk);
-            left
+            
+            self.0.range(mk.start_ty()..=mk)
         } else {
             let mk = MinKey::new(ty, TypeData::Null);
             let mk_next = MinKey::new(ty + 1, TypeData::Null);
-            let left = self.0.range(mk.start_ty()..mk_next);
-            left
+            
+            self.0.range(mk.start_ty()..mk_next)
         }
     }
     pub fn get_in_one_mut(&mut self, ty: u64, pkey: TypeData) -> impl DoubleEndedIterator<Item=(&MinKey, &mut CHValue)> {
         let mk = MinKey::new(ty, pkey);
-        let mut left = self.0.range_mut(mk.start_ty()..=mk).rev();
+        let left = self.0.range_mut(mk.start_ty()..=mk).rev();
         left
     }
 

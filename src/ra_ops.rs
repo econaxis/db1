@@ -1,7 +1,7 @@
-use std::path::Iter;
+
 use dynamic_tuple::{DynamicTuple, TupleBuilder, Type, TypedTable};
 use serializer::PageSerializer;
-use table_base2::TableBase2;
+
 
 struct Where<'a> {
     source: &'a mut dyn Iterator<Item=TupleBuilder>,
@@ -31,7 +31,7 @@ impl<'a> Iterator for Where<'a> {
                 return Some(i);
             }
         }
-        return None;
+        None
     }
 }
 

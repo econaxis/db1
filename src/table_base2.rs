@@ -3,13 +3,13 @@ use std::collections::{BinaryHeap, Bound};
 use std::convert::TryInto;
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::ops::{Index, RangeBounds, RangeInclusive};
+use std::ops::{RangeBounds};
 use std::option::Option::None;
 
 
 use dynamic_tuple::{RWS, Type, TypeData};
-use dynamic_tuple::{DynamicTuple, DynamicTupleInstance, TupleBuilder};
-use hash::InvalidWriter;
+use dynamic_tuple::{DynamicTuple, TupleBuilder};
+
 use serializer::PageSerializer;
 use table_base::read_to_buf;
 use ::{BytesSerialize, Db1String};
@@ -363,7 +363,7 @@ impl TableBase2 {
     }
     pub fn search_value(&self, value: TypeData) -> Vec<&[u8]> {
         let mut ans = Vec::new();
-        let mut range = self.get_ranges(&value..=&value);
+        let range = self.get_ranges(&value..=&value);
         for location in range {
             let index = location as usize * self.type_size;
             if index + 8 >= self.data.len() || self.load_pkey(index, 1) != value {

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::option::Option::None;
@@ -9,7 +9,7 @@ use table_base::read_to_buf;
 use table_base2::{TableBase2, TableType};
 use {ChunkHeader, FromReader};
 use dynamic_tuple::TypeData;
-use serializer;
+use ::{serializer, table_base2};
 
 #[derive(Debug)]
 pub struct PageSerializer<W: Read + Write + Seek> {
@@ -362,7 +362,7 @@ impl<W: Write + Seek + Read> PageSerializer<W> {
                 Some(ch.location)
             }
         }
-        let mut candidate_pages = self
+        let candidate_pages = self
             .previous_headers
             // TODO(hn): r::MAX, r::MIN
             // will never have to compare across types because tables should all have the same time
@@ -394,7 +394,7 @@ fn serializer_works() {
             max: Some(TypeData::Int(0)),
         },
         compressed_size: 0,
-        table_type: TableType::Data,
+        table_type: table_base2::TableType::Data,
     };
     let mut ps = PageSerializer::default();
     ps.add_page(vec![0, 1, 2, 3, 4, 5], default_ch.clone());

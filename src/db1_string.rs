@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
-use std::io::{IoSlice, Read, Seek, Write};
+use std::io::{Read, Seek, Write};
 use std::os::raw::c_char;
 
 use crate::chunk_header::slice_from_type;
@@ -167,7 +167,7 @@ impl BytesSerialize for Db1String {
 }
 
 impl FromReader for Db1String {
-    fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
+    fn from_reader_and_heap<R: Read>(mut r: R, _heap: &[u8]) -> Self {
         let mut check_sequence: u8 = 0;
         let mut loc: u32 = 0;
         let mut len: u32 = 0;

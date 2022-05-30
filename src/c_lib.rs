@@ -13,13 +13,13 @@ extern crate core;
 extern crate rand;
 extern crate test;
 
-use std::cmp::Ordering;
-use std::ffi::{CStr, CString};
-use std::fmt::{Debug, Formatter};
-use std::fs::File;
-use std::hash::{Hash, Hasher};
-use std::io::{Read, Seek, Write};
-use std::os::raw::c_char;
+
+
+
+
+
+use std::io::{Read};
+
 
 pub use range::Range;
 
