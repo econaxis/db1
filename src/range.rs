@@ -119,7 +119,6 @@ impl FromReader for Range<u64> {
             }
             OptionState::None => {
                 panic!("Option state is none");
-                Self::default()
             },
         }
     }
