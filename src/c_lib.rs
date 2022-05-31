@@ -49,3 +49,6 @@ mod table_manager;
 mod table_traits;
 mod tests;
 mod ra_ops;
+mod secondary_index;
+mod typed_table;
+mod named_tables;

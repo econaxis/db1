@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::cmp::{Ordering};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use std::ffi::{CStr, CString};
@@ -15,11 +15,11 @@ use std::sync::Once;
 
 use db1_string::Db1String;
 use dynamic_tuple::TypeData::Null;
-use ::{slice_from_type};
+use slice_from_type;
 use serializer::PageSerializer;
 use table_base::read_to_buf;
 use table_base2::{TableBase2, TableType};
-use ::{FromReader};
+use FromReader;
 use {BytesSerialize, SuitableDataType};
 use serializer;
 
@@ -142,7 +142,7 @@ impl Into<TypeData> for u64 {
 
 #[derive(Default, Clone, Debug)]
 pub struct DynamicTuple {
-    fields: Vec<Type>,
+    pub(crate) fields: Vec<Type>,
 }
 
 // todo: TupleBuilder but without malloc -- just a schema for tuples
@@ -308,24 +308,7 @@ impl DynamicTuple {
 //     // tb1.get(..);
 // }
 
-struct NamedTables {
-    pub tables: HashMap<String, TypedTable>,
-    largest_id: u64,
-}
 
-#[derive(Clone, Debug)]
-struct IndexDescriptor {
-    on_column: u64,
-    raw_table: TypedTable,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypedTable {
-    ty: DynamicTuple,
-    pub(crate) id_ty: u64,
-    column_map: HashMap<String, u32>,
-    attached_indices: Vec<IndexDescriptor>,
-}
 
 pub trait RWS = Read + Write + Seek;
 
@@ -340,7 +323,7 @@ pub struct TableCursor<'a> {
 }
 
 impl<'a> TableCursor<'a> {
-    fn new< W: RWS>(locations: Vec<u64>, ps: & mut PageSerializer<W>, ty: &'a DynamicTuple, pkey: Option<TypeData>, load_columns: u64) -> Self {
+    pub(crate) fn new< W: RWS>(locations: Vec<u64>, ps: & mut PageSerializer<W>, ty: &'a DynamicTuple, pkey: Option<TypeData>, load_columns: u64) -> Self {
         let mut se = Self {
             locations,
             ty,
@@ -368,6 +351,10 @@ impl<'a> TableCursor<'a> {
 }
 
 use ra_ops::RANodeIterator;
+use crate::named_tables::NamedTables;
+use crate::secondary_index::SecondaryIndices;
+use crate::typed_table::TypedTable;
+
 impl<W: RWS> RANodeIterator<W> for TableCursor<'_> {
     fn next(&mut self, ps: &mut PageSerializer<W>) -> Option<TupleBuilder> {
         if self.current_index < self.end_index_exclusive {
@@ -392,139 +379,10 @@ impl<W: RWS> RANodeIterator<W> for TableCursor<'_> {
     }
 }
 
-
-#[derive(Default)]
-struct SecondaryIndices {
-    indices: Vec<IndexDescriptor>,
-}
-
-#[test]
-fn secondaryindices_works() {
-    let mut ps = PageSerializer::default();
-    let ps = &mut ps;
-    let mut nt = NamedTables::new(ps);
-
-    let mut si = SecondaryIndices::default();
-    si.append_secondary_index(ps, &mut nt, "SI", Type::String, Type::Int, 1);
-
-    for i in 0..350_000 {
-        si.store(ps, TupleBuilder::default().add_int(i).add_string(i.to_string()));
-    }
-    for i in 0..350_000 {
-        assert_eq!(si.query(ps, 1, TypeData::String(i.to_string().into()))[0], TypeData::Int(i))
-    }
-}
-
-impl SecondaryIndices {
-    fn append_secondary_index<W: RWS>(&mut self, ps: &mut PageSerializer<W>, nt: &mut NamedTables, name: &str, value_ty: Type, pkey_ty: Type, on_column: u64) {
-        let cr = CreateTable {
-            tbl_name: name.to_string(),
-            fields: vec![("value".to_string(), value_ty), ("row".to_string(), pkey_ty)],
-        };
-        nt.insert_table(cr, ps);
-
-        let raw_table = nt.tables.get(name).unwrap().clone();
-        self.indices.push(IndexDescriptor {
-            on_column,
-            raw_table,
-        })
-    }
-    fn store<W: RWS>(&mut self, ps: &mut PageSerializer<W>, tuple: TupleBuilder) {
-        let pkey = tuple.first_v2().clone();
-        for indice in &self.indices {
-            let indexed_col = tuple.extract(indice.on_column as usize).clone();
-            let index_tuple = TupleBuilder {
-                fields: vec![indexed_col, pkey.clone()]
-            };
-            indice.raw_table.store_raw(index_tuple, ps);
-        }
-    }
-
-    fn query<W: RWS>(&self, ps: &mut PageSerializer<W>, column: u64, equal: TypeData) -> Vec<TypeData> {
-        let ind = self.indices.iter().find(|a| a.on_column == column).expect("Column is not indexed");
-        let mut table_iter = ind.raw_table.get_in_all_iter(Some(equal), u64::MAX, ps);
-        table_iter.collect(ps).into_iter().map(|a| a.extract(1).clone()).collect()
-    }
-}
-
-impl TypedTable {
-    pub fn get_in_all_iter<W: RWS>(&self, pkey: Option<TypeData>, load_columns: u64, ps: & mut PageSerializer<W>) -> TableCursor<'_> {
-        let location_iter = ps.get_in_all(self.id_ty, pkey.clone());
-        TableCursor::new(location_iter, ps, &self.ty, pkey, load_columns)
-    }
-
-    pub(crate) fn store_raw(&self, t: TupleBuilder, ps: &mut PageSerializer<impl RWS>) {
-        assert!(t.type_check(&self.ty));
-        let max_page_len = ps.maximum_serialized_len();
-        let pkey = t.first_v2().clone();
-        let (_location, page) = match ps.get_in_all_insert(self.id_ty, pkey.clone()) {
-            Some(location) => {
-                let page = ps.load_page_cached(location);
-                if !page.limits.overlaps(&(&pkey..=&pkey)) {
-                    ps.previous_headers
-                        .update_limits(self.id_ty, location, pkey);
-                }
-
-                // Have to load page again because of the damn borrow checker...
-                let page = ps.load_page_cached(location);
-                page.insert_tb(t);
-                (location, page)
-            }
-            None => {
-                let table_type = if self.ty.fields[0] == Type::Int {
-                    TableType::Data
-                } else {
-                    TableType::Index(Type::String)
-                };
-
-                let mut new_page = TableBase2::new(self.id_ty, self.ty.size() as usize, table_type);
-                new_page.insert_tb(t);
-                let location = new_page.force_flush(ps);
-                (location, ps.load_page_cached(location))
-            }
-        };
-
-        // If estimated flush size is >= 16000, then we should split page to avoid going over page size limit
-        if page.serialized_len() >= max_page_len {
-            let old_min_limits = page.limits.min.clone().unwrap();
-            let newpage = page.split(&self.ty);
-            if let Some(mut x) = newpage {
-                assert!(!x.limits.overlaps(&page.limits), "{:?} {:?}", &x.limits, &page.limits);
-                let page_limits = page.limits.clone();
-                ps.previous_headers
-                    .reset_limits(self.id_ty, old_min_limits, page_limits);
-                x.force_flush(ps);
-            }
-        }
-    }
-
-
-    pub(crate) fn new<W: Write + Read + Seek>(
-        ty: DynamicTuple,
-        id: u64,
-        _ps: &mut PageSerializer<W>,
-        columns: Vec<impl Into<String>>,
-    ) -> Self {
-        assert_eq!(columns.len(), ty.fields.len());
-        println!("Creating dyntable {:?}", ty);
-
-        Self {
-            ty,
-            id_ty: id,
-            column_map: columns
-                .into_iter()
-                .enumerate()
-                .map(|(ind, a)| (a.into(), ind as u32))
-                .collect(),
-            attached_indices: Default::default(),
-        }
-    }
-}
-
 #[derive(Debug, PartialEq)]
-struct CreateTable {
-    tbl_name: String,
-    fields: Vec<(String, Type)>,
+pub(crate) struct CreateTable {
+    pub(crate) tbl_name: String,
+    pub(crate) fields: Vec<(String, Type)>,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -568,9 +426,9 @@ impl<'a> TokenStream<'a> {
 }
 
 #[derive(Debug, PartialEq)]
-struct InsertValues {
-    values: Vec<Vec<TypeData>>,
-    tbl_name: String,
+pub(crate) struct InsertValues {
+    pub(crate) values: Vec<Vec<TypeData>>,
+    pub(crate) tbl_name: String,
 }
 
 type TokenStreamRef<'a, 'b> = &'a TokenStream<'b>;
@@ -709,15 +567,15 @@ fn lex(str: &str) -> TokenStream {
 }
 
 #[derive(Debug, PartialEq)]
-enum Filter {
+pub(crate) enum Filter {
     Equals(String, TypeData),
 }
 
 #[derive(Debug, PartialEq)]
-struct Select {
-    tbl_name: String,
-    columns: Vec<String>,
-    filter: Vec<Filter>,
+pub(crate) struct Select {
+    pub(crate) tbl_name: String,
+    pub(crate) columns: Vec<String>,
+    pub(crate) filter: Vec<Filter>,
 }
 
 fn parse_comma_delimited_list<'a, 'b, T: 'b, F: Fn(TokenStreamRef<'a, 'b>) -> T>(
@@ -988,154 +846,6 @@ fn onehundred_typed_tables() {
                 .add_string(format!("hello{i}"))
                 .add_string(format!("world{i}"))]
         );
-    }
-}
-
-impl NamedTables {
-    fn new(s: &mut PageSerializer<impl RWS>) -> Self {
-        // Load schema table first
-        let schema = TypedTable {
-            ty: DynamicTuple {
-                // TableID (64 bit type id), TableName, Column Name, Column Type,
-                fields: vec![Type::Int, Type::String, Type::String, Type::Int],
-            },
-            id_ty: 2,
-            column_map: Default::default(),
-            attached_indices: Default::default(),
-        };
-
-        let mut tables = HashMap::new();
-
-        let mut entry = tables.entry("schema".to_string()).insert_entry(schema);
-        let schema = entry.get_mut();
-        let mut large_id = 3;
-
-        for tup in schema.get_in_all_iter(None, 0, s).collect(s).into_iter().rev() {
-            let id = tup.extract_int(0);
-            let table_name = std::str::from_utf8(tup.extract_string(1)).unwrap();
-            let column_name = std::str::from_utf8(tup.extract_string(2)).unwrap();
-            let column_type = Type::from(tup.extract_int(3));
-
-            let r = tables
-                .entry(table_name.to_string())
-                .or_insert_with(|| TypedTable {
-                    ty: DynamicTuple::default(),
-                    column_map: Default::default(),
-                    id_ty: id,
-                    attached_indices: Default::default(),
-                });
-            println!("Adding column {} {}", table_name, column_name);
-            r.column_map
-                .insert(column_name.to_string(), r.ty.fields.len() as u32);
-            r.ty.fields.push(column_type);
-            large_id = large_id.max(id);
-        }
-
-        Self {
-            tables,
-            largest_id: large_id,
-        }
-    }
-
-    fn insert_table(
-        &mut self,
-        CreateTable {
-            tbl_name: name,
-            fields: columns,
-        }: CreateTable,
-        ps: &mut PageSerializer<impl RWS>,
-    ) {
-        self.largest_id += 1;
-        let table_id = self.largest_id;
-        // First insert to schema table
-
-        let schema_table = self.tables.get_mut("schema").unwrap();
-        for (colname, col) in &columns {
-            println!("Insert col {colname}");
-            let tup = TupleBuilder::default()
-                .add_int(table_id)
-                .add_string(name.clone())
-                .add_string(colname.clone())
-                .add_int(*col as u64);
-            schema_table.store_raw(tup, ps);
-        }
-
-        let types = columns.iter().map(|a| a.1).collect();
-        let names = columns.into_iter().map(|a| a.0).collect();
-        self.tables.insert(
-            name,
-            TypedTable::new(DynamicTuple { fields: types }, table_id, ps, names),
-        );
-    }
-
-    fn execute_insert(&mut self, insert: InsertValues, ps: &mut PageSerializer<impl RWS>) {
-        let table = self.tables.get_mut(&insert.tbl_name).unwrap();
-        for t in insert.values {
-            let tuple = TupleBuilder { fields: t };
-            tuple.type_check(&table.ty);
-            table.store_raw(tuple, ps);
-        }
-    }
-
-    fn calculate_column_mask(table: &TypedTable, fields: &[String]) -> u64 {
-        let mut mask = 0;
-        if fields.is_empty() {
-            return u64::MAX;
-        }
-        for f in fields {
-            if f == "*" {
-                mask = u64::MAX;
-                return mask;
-            }
-            let index = table.column_map[f];
-            assert!(index < 64);
-            mask |= 1 << index;
-        }
-        mask
-    }
-
-    fn execute_select<'a, W: RWS>(
-        &mut self,
-        select: Select,
-        ps: &'a mut PageSerializer<W>,
-    ) -> QueryData<'a, W> {
-        let table = self.tables.get_mut(&select.tbl_name).unwrap();
-        let col_mask = Self::calculate_column_mask(table, &select.columns);
-
-        let filter = select.filter;
-
-        // TODO: only supports the first filter condition for now
-        let results: Vec<_> = match filter.first() {
-            Some(Filter::Equals(colname, TypeData::Int(icomp))) => {
-                match table.column_map[colname] {
-                    0 => table.get_in_all_iter(Some(TypeData::Int(*icomp)), col_mask, ps).collect(ps),
-                    colindex => {
-                        todo!()
-                        // println!("Warning: using inefficient table scan");
-                        // let query_result = table.get_in_all_iter(None, col_mask, ps);
-                        //
-                        // query_result.filter(|i| match i.fields[colindex as usize] {
-                        //     TypeData::Int(int) => int == *icomp,
-                        //     _ => panic!(),
-                        // }).collect()
-                    }
-                }
-            }
-            Some(Filter::Equals(colname, TypeData::String(s))) => {
-                todo!()
-                // println!("Warning: using inefficient table scan");
-                //
-                // let colindex = table.column_map[colname];
-                // let qr = table.get_in_all_iter(None, col_mask, ps);
-                // qr.filter(|i| match &i.fields[colindex as usize] {
-                //     TypeData::String(s1) => s1 == s,
-                //     _ => panic!(),
-                // }).collect()
-            }
-            None | Some(Filter::Equals(_, Null)) => table.get_in_all_iter(None, col_mask, ps).collect(ps),
-        };
-
-        QueryData::new(results, vec![], ps)
     }
 }
 

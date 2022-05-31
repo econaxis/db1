@@ -1,6 +1,7 @@
 use std::io::Cursor;
-use dynamic_tuple::{DynamicTuple, TupleBuilder, Type, TypeData, TypedTable, RWS};
+use dynamic_tuple::{DynamicTuple, RWS, TupleBuilder, Type, TypeData};
 use serializer::PageSerializer;
+use crate::typed_table::TypedTable;
 
 
 struct Where<'a, W: RWS> {
@@ -13,6 +14,7 @@ struct WhereByPkey<'a> {
     pkey: Option<TypeData>
 }
 
+
 struct NestedLoopInnerJoin<'a, 'b, W: RWS> {
     left: &'a mut dyn RANodeIterator<W>,
     right: &'b mut dyn RANodeIterator<W>,
@@ -23,7 +25,6 @@ struct NestedLoopInnerJoin<'a, 'b, W: RWS> {
 
 impl<'a, 'b, W: RWS> RANodeIterator<W> for NestedLoopInnerJoin<'a, 'b, W>{
     fn next(&mut self, ps: &mut PageSerializer<W>) -> Option<TupleBuilder> {
-
         if self.result.is_none() {
             let mut output = Vec::new();
             let right = self.right.collect(ps);
@@ -80,6 +81,7 @@ impl<'a, W: RWS> RANodeIterator<W> for Where<'a, W> {
     }
 }
 
+
 #[test]
 fn where_by_pkey() {
     let (mut ps, mut tt) = init_test_table();
@@ -126,11 +128,11 @@ fn nested_loop() {
 
     let tt1 = TypedTable::new(DynamicTuple::new(vec![Type::Int, Type::String]), 11, &mut ps, vec!["id", "content"]);
 
-    for i in 0..100 {
-        tt1.store_raw(TupleBuilder::default().add_int(i * 13).add_string(format!("hello{i}")), &mut ps);
+    for i in 0..2000 {
+        tt1.store_raw(TupleBuilder::default().add_int(i).add_string(format!("hello{}", i * 13)), &mut ps);
     }
 
-    let mut nl = NestedLoopInnerJoin::<Cursor<Vec<u8>>> {
+    let mut nl = NestedLoopInnerJoin {
         left: &mut tt.get_in_all_iter(None, u64::MAX, &mut ps),
         right: &mut tt1.get_in_all_iter(None, u64::MAX, &mut ps),
         left_col: 0,
