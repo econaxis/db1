@@ -3,19 +3,20 @@ use std::collections::{BinaryHeap, Bound};
 use std::convert::TryInto;
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::ops::{RangeBounds};
+use std::ops::RangeBounds;
 use std::option::Option::None;
 
 
-use dynamic_tuple::{RWS, Type, TypeData};
+use dynamic_tuple::RWS;
 use dynamic_tuple::{DynamicTuple, TupleBuilder};
 
 use serializer::PageSerializer;
 use table_base::read_to_buf;
 use ::{BytesSerialize, Db1String};
 use {ChunkHeader, Range};
-use {FromReader};
+use FromReader;
 use serializer;
+use crate::type_data::{Type, TypeData};
 
 #[derive(PartialEq, Debug, Copy, Clone)]
 pub enum TableType {
@@ -410,7 +411,7 @@ impl FromReader for TableBase2 {
 
 #[test]
 fn works() {
-    use dynamic_tuple::Type;
+    use crate::type_data::Type;
     let mut db = TableBase2::new(19, (Db1String::TYPE_SIZE * 2 + 8) as usize, TableType::Data);
     let mut ps = PageSerializer::create(Cursor::new(Vec::new()), None);
 

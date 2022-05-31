@@ -1,9 +1,11 @@
-use dynamic_tuple::{DynamicTuple, RWS, TableCursor, TupleBuilder, Type, TypeData};
+use dynamic_tuple::{DynamicTuple, RWS, TupleBuilder};
 use serializer::PageSerializer;
 use std::io::{Read, Seek, Write};
 use std::collections::HashMap;
 use secondary_index::SecondaryIndices;
 use table_base2::{TableBase2, TableType};
+use crate::table_cursor::TableCursor;
+use crate::type_data::{Type, TypeData};
 
 #[derive(Clone, Debug)]
 pub struct TypedTable {

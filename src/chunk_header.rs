@@ -3,13 +3,13 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::io::{Cursor, Read, Seek, Write};
-use dynamic_tuple::{TypeData};
 use table_base2::TableType;
 
 
 
 use crate::bytes_serializer::{BytesSerialize, FromReader};
 use crate::range::Range;
+use crate::type_data::TypeData;
 
 const CH_CHECK_SEQUENCE: u64 = 0x32aa842f80ad9;
 

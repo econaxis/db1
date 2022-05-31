@@ -2,7 +2,7 @@ use std::collections::Bound;
 use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek, Write};
 use std::ops::RangeBounds;
-use dynamic_tuple::TypeData;
+use crate::type_data::TypeData;
 
 use table_base::read_to_buf;
 

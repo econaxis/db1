@@ -1,6 +1,7 @@
 use std::io::Cursor;
-use dynamic_tuple::{DynamicTuple, RWS, TupleBuilder, Type, TypeData};
+use dynamic_tuple::{DynamicTuple, RWS, TupleBuilder};
 use serializer::PageSerializer;
+use crate::type_data::{Type, TypeData};
 use crate::typed_table::TypedTable;
 
 

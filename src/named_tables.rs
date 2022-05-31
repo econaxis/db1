@@ -1,11 +1,12 @@
 use std::collections::HashMap;
-use dynamic_tuple::{CreateTable, DynamicTuple, RWS, TupleBuilder, Type, TypeData};
-use dynamic_tuple::TypeData::Null;
+use dynamic_tuple::{DynamicTuple, RWS, TupleBuilder};
+use crate::type_data::TypeData::Null;
 use query_data::QueryData;
 use ra_ops::RANodeIterator;
 use serializer::PageSerializer;
 use typed_table::TypedTable;
-use crate::dynamic_tuple::{Filter, InsertValues, Select};
+use crate::parser::{CreateTable, Filter, InsertValues, Select};
+use crate::type_data::{Type, TypeData};
 
 enum DbOtherObjectType {
     SecondaryIndex(SecondaryIndexSchemaInfo)

@@ -14,7 +14,7 @@ use std::sync::Once;
 
 
 use db1_string::Db1String;
-use dynamic_tuple::TypeData::Null;
+use crate::type_data::TypeData::Null;
 use slice_from_type;
 use serializer::PageSerializer;
 use table_base::read_to_buf;
@@ -26,119 +26,7 @@ use serializer;
 
 use crate::query_data::QueryData;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum Type {
-    Int = 1,
-    String = 2,
-}
 
-impl From<u64> for Type {
-    fn from(i: u64) -> Self {
-        match i {
-            1 => Type::Int,
-            2 => Type::String,
-            _ => panic!(),
-        }
-    }
-}
-
-#[derive(Debug, Eq, Clone)]
-pub enum TypeData {
-    Int(u64),
-    String(Db1String),
-    Null,
-}
-
-impl Ord for TypeData {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap()
-    }
-}
-
-impl PartialOrd for TypeData {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        let result = match (self, other) {
-            (TypeData::Int(x), TypeData::Int(y)) => x.partial_cmp(y),
-            (TypeData::String(x), TypeData::String(y)) => x.partial_cmp(y),
-            (TypeData::Null, TypeData::Null) => Some(Ordering::Equal),
-            (TypeData::Null, _other) => Some(Ordering::Less),
-            (_self_, TypeData::Null) => Some(Ordering::Greater),
-            (TypeData::Int(u64::MAX), _) => Some(Ordering::Greater),
-            (_, TypeData::Int(u64::MAX)) => Some(Ordering::Less),
-            _ => panic!("Invalid comparison between {:?} {:?}", self, other)
-        };
-        result
-    }
-}
-
-impl PartialEq for TypeData {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (TypeData::Int(x), TypeData::Int(y)) => x.eq(y),
-            (TypeData::String(x), TypeData::String(y)) => x.eq(y),
-            (TypeData::Null, TypeData::Null) => true,
-            _ => false,
-        }
-    }
-}
-
-impl TypeData {
-    const INT_TYPE: u8 = 1;
-    const STRING_TYPE: u8 = 2;
-    const NULL_TYPE: u8 = 0;
-    fn get_type_code(&self) -> u8 {
-        match self {
-            TypeData::Int(_) => TypeData::INT_TYPE,
-            TypeData::String(_) => TypeData::STRING_TYPE,
-            TypeData::Null => TypeData::NULL_TYPE,
-        }
-    }
-}
-
-impl FromReader for TypeData {
-    fn from_reader_and_heap<R: Read>(mut r: R, heap: &[u8]) -> Self {
-        let mut type_code: u8 = 0;
-        r.read_exact(slice_from_type(&mut type_code)).unwrap();
-
-        match type_code {
-            TypeData::INT_TYPE => {
-                let mut int: u64 = 0;
-                r.read_exact(slice_from_type(&mut int)).unwrap();
-                TypeData::Int(int)
-            }
-            TypeData::STRING_TYPE => {
-                TypeData::String(Db1String::from_reader_and_heap(&mut r, heap))
-            }
-            TypeData::NULL_TYPE => {
-                TypeData::Null
-            }
-            _ => panic!("Invalid type code got {}", type_code)
-        }
-    }
-}
-
-impl BytesSerialize for TypeData {
-    fn serialize_with_heap<W: Write, W1: Write + Seek>(&self, mut data: W, heap: W1) {
-        data.write_all(&self.get_type_code().to_le_bytes()).unwrap();
-        match self {
-            TypeData::Int(i) => data.write_all(&i.to_le_bytes()).unwrap(),
-            TypeData::String(s) => s.serialize_with_heap(&mut data, heap),
-            TypeData::Null => {}
-        }
-    }
-}
-
-impl From<&'_ str> for TypeData {
-    fn from(i: &'_ str) -> Self {
-        Self::String(i.to_string().into())
-    }
-}
-
-impl Into<TypeData> for u64 {
-    fn into(self) -> TypeData {
-        TypeData::Int(self)
-    }
-}
 
 #[derive(Default, Clone, Debug)]
 pub struct DynamicTuple {
@@ -272,454 +160,17 @@ impl DynamicTuple {
     }
 }
 
-// #[test]
-// fn build_tuple_w_string() {
-//     let mut cursor = Cursor::<Vec<u8>>::default();
-//     {
-//         let mut tb = DynamicTable::new(&mut cursor, false);
-//
-//         let tuple = TupleBuilder::default()
-//             .add_int(30)
-//             .add_int(10)
-//             .add_string("hello world")
-//             .add_string("fdjsakf;ld saflkdsa;j fdavcx");
-//         tb.store(tuple);
-//
-//         let tuple = TupleBuilder::default()
-//             .add_int(60)
-//             .add_int(20)
-//             .add_string("60 hello world")
-//             .add_string("60 fdjsakf;ld saflkdsa;j fdavcx");
-//         tb.store(tuple);
-//         tb.force_flush();
-//     }
-//
-//     cursor.set_position(0);
-//     let _tb1 = TypedTable {
-//         ty: DynamicTuple {
-//             fields: vec![Type::Int, Type::Int, Type::String, Type::String],
-//         },
-//         column_map: Default::default(),
-//         id_ty: 1,
-//     };
-//     // let mut ps =
-//     // tb1.get_in_all(None, )
-//     // let mut tb1 = DynamicTable::new(&mut cursor, , true);
-//     // tb1.get(..);
-// }
-
 
 
 pub trait RWS = Read + Write + Seek;
 
-pub struct TableCursor<'a> {
-    locations: Vec<u64>,
-    ty: &'a DynamicTuple,
-    // current_tuples: Vec<TupleBuilder>,
-    current_index: u64,
-    end_index_exclusive: u64,
-    pkey: Option<TypeData>,
-    load_columns: u64,
-}
-
-impl<'a> TableCursor<'a> {
-    pub(crate) fn new< W: RWS>(locations: Vec<u64>, ps: & mut PageSerializer<W>, ty: &'a DynamicTuple, pkey: Option<TypeData>, load_columns: u64) -> Self {
-        let mut se = Self {
-            locations,
-            ty,
-            current_index: 0,
-            end_index_exclusive: 0,
-            pkey,
-            load_columns,
-        };
-        if !se.locations.is_empty() {
-            se.reset_index_iterator(ps);
-        }
-        se
-    }
-    fn reset_index_iterator<W: RWS>(&mut self, ps: &mut PageSerializer<W>) {
-        // Reload the index iterator for the new table
-        let table = ps.load_page_cached(*self.locations.last().unwrap());
-        let range = if let Some(pk) = &self.pkey {
-            table.get_ranges(pk..=pk)
-        } else {
-            0..table.len()
-        };
-        self.current_index = range.start;
-        self.end_index_exclusive = range.end;
-    }
-}
-
 use ra_ops::RANodeIterator;
 use crate::named_tables::NamedTables;
+use crate::parser;
+use crate::parser::{CreateTable, Filter, InsertValues, Select};
 use crate::secondary_index::SecondaryIndices;
+use crate::type_data::{Type, TypeData};
 use crate::typed_table::TypedTable;
-
-impl<W: RWS> RANodeIterator<W> for TableCursor<'_> {
-    fn next(&mut self, ps: &mut PageSerializer<W>) -> Option<TupleBuilder> {
-        if self.current_index < self.end_index_exclusive {
-            // Work on self.current_index
-            let location = self.locations.last()?;
-            let table = ps.load_page_cached(*location);
-
-            let bytes = table.load_index(self.current_index as usize);
-            let tuple = self.ty.read_tuple(bytes, self.load_columns, table.heap().get_ref());
-
-            self.current_index += 1;
-            Some(tuple)
-        } else if self.locations.len() > 1 {
-            self.locations.pop().unwrap();
-            self.reset_index_iterator(ps);
-            self.next(ps)
-        } else if self.locations.len() == 1 {
-            None
-        } else {
-            None
-        }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub(crate) struct CreateTable {
-    pub(crate) tbl_name: String,
-    pub(crate) fields: Vec<(String, Type)>,
-}
-
-#[derive(PartialEq, Debug, Clone)]
-enum Token<'a> {
-    Identifier(&'a str),
-    String(String),
-    Empty,
-    Number(u64),
-    LParens,
-    RParens,
-    Comma,
-    End,
-}
-
-#[derive(Debug)]
-struct TokenStream<'a> {
-    a: Vec<Token<'a>>,
-    ind: Cell<usize>,
-}
-
-impl<'a> TokenStream<'a> {
-    fn next(&self) -> &Token {
-        self.ind.set(self.ind.get() + 1);
-        &self.a[self.ind.get() - 1]
-    }
-    pub fn peek(&self) -> &Token {
-        &self.a[self.ind.get()]
-    }
-    pub fn extract_identifier(&self) -> &str {
-        match self.next() {
-            Token::Identifier(s) => s,
-            other => panic!("Expected identifier, got {:?}", other),
-        }
-    }
-    pub fn extract(&self, a: Token) -> &Token {
-        match self.next() {
-            match_a if match_a == &a => match_a,
-            _ => panic!(),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub(crate) struct InsertValues {
-    pub(crate) values: Vec<Vec<TypeData>>,
-    pub(crate) tbl_name: String,
-}
-
-type TokenStreamRef<'a, 'b> = &'a TokenStream<'b>;
-
-fn parse_user_data(str: TokenStreamRef) -> TypeData {
-    match str.next() {
-        Token::String(s) => TypeData::String(s.clone().into()),
-        Token::Number(i) => {
-            let i = *i;
-            TypeData::Int(i)
-        }
-        _x => {
-            panic!("Remaining: {:?}", str)
-        }
-    }
-}
-
-fn parse_insert_values(str: TokenStreamRef) -> InsertValues {
-    let tbl_name = str.extract_identifier();
-    let mut td = Vec::new();
-
-    assert_eq!(str.extract_identifier(), "VALUES");
-
-    loop {
-        str.extract(Token::LParens);
-        let tuple = parse_comma_delimited_list(str, parse_user_data);
-        str.extract(Token::RParens);
-        td.push(tuple);
-        if str.peek() != &Token::Comma {
-            break;
-        } else {
-            str.extract(Token::Comma);
-        }
-    }
-    InsertValues {
-        values: td,
-        tbl_name: tbl_name.to_string(),
-    }
-}
-
-fn parse_create_table(str: TokenStreamRef) -> CreateTable {
-    let tbl_name = str.extract_identifier();
-    assert_eq!(str.next(), &Token::LParens);
-
-    let mut fields = Vec::new();
-    loop {
-        let name = str.extract_identifier();
-        let ty = str.extract_identifier();
-        let ty = match ty {
-            "INT" | "int" => Type::Int,
-            "STRING" | "string" => Type::String,
-            _ => panic!(),
-        };
-        fields.push((name.to_string(), ty));
-
-        match str.next() {
-            Token::Comma => {}
-            Token::RParens => break,
-            _ => panic!(),
-        }
-    }
-
-    CreateTable {
-        tbl_name: tbl_name.to_string(),
-        fields,
-    }
-}
-
-fn lex(str: &str) -> TokenStream {
-    let mut tokens = Vec::new();
-    let mut prev_index = 0;
-    let mut split = Vec::new();
-    for (index, matched) in str.match_indices(&[',', ' ', '(', ')', '"', '\n', '\\']) {
-        if prev_index != index {
-            split.push(&str[prev_index..index]);
-        }
-        if !matched.is_empty() {
-            split.push(matched);
-        }
-        prev_index = index + 1;
-    }
-    if prev_index < str.len() {
-        split.push(&str[prev_index..]);
-    }
-    let mut escaped = false;
-    let mut in_string: Option<String> = None;
-    for s in split {
-        // Filter out whitespace
-        let token = match s {
-            "\\" => {
-                escaped = true;
-                assert!(in_string.is_some());
-                Token::Empty
-            }
-            "\"" if !escaped => {
-                if let Some(str) = in_string.take() {
-                    Token::String(str)
-                } else {
-                    in_string = Some("".to_string());
-                    Token::Empty
-                }
-            }
-            x if in_string.is_some() => {
-                escaped = false;
-                in_string.as_mut().unwrap().push_str(x);
-                Token::Empty
-            }
-            " " | "\n" | "\r" if in_string.is_none() => continue,
-            "," => Token::Comma,
-            "(" => Token::LParens,
-            ")" => Token::RParens,
-            a => {
-                assert!(
-                    a.chars()
-                        .all(|a| a.is_alphanumeric() || a == '_' || a == '*'),
-                    "{}",
-                    a
-                );
-
-                if a.chars().all(|a| a.is_numeric()) {
-                    Token::Number(a.parse::<u64>().unwrap())
-                } else {
-                    Token::Identifier(a)
-                }
-            }
-        };
-        if token != Token::Empty {
-            tokens.push(token);
-        }
-    }
-    tokens.push(Token::End);
-    TokenStream {
-        a: tokens,
-        ind: Cell::new(0),
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub(crate) enum Filter {
-    Equals(String, TypeData),
-}
-
-#[derive(Debug, PartialEq)]
-pub(crate) struct Select {
-    pub(crate) tbl_name: String,
-    pub(crate) columns: Vec<String>,
-    pub(crate) filter: Vec<Filter>,
-}
-
-fn parse_comma_delimited_list<'a, 'b, T: 'b, F: Fn(TokenStreamRef<'a, 'b>) -> T>(
-    str: TokenStreamRef<'a, 'b>,
-    f: F,
-) -> Vec<T> {
-    let mut a = Vec::new();
-    loop {
-        a.push(f(str));
-
-        match str.peek() {
-            Token::Comma => {
-                str.next();
-            }
-            _ => break,
-        };
-    }
-    a
-}
-
-fn parse_where(str: TokenStreamRef) -> Vec<Filter> {
-    let column_name = str.extract_identifier();
-    assert_eq!(str.extract_identifier(), "EQUALS");
-    let data = parse_user_data(str);
-
-    vec![Filter::Equals(column_name.to_string(), data)]
-}
-
-fn parse_select(str: TokenStreamRef) -> Select {
-    let columns = parse_comma_delimited_list(str, |a| a.extract_identifier());
-    assert_eq!(str.extract_identifier(), "FROM");
-    let tbl_name = str.extract_identifier();
-
-    let filters = match str.next() {
-        Token::Identifier(s) if *s == "WHERE" => parse_where(str),
-        _ => {
-            vec![]
-        }
-    };
-
-    Select {
-        tbl_name: tbl_name.to_string(),
-        columns: columns.iter().map(|a| a.to_string()).collect(),
-        filter: filters,
-    }
-}
-
-#[derive(Debug, PartialEq)]
-enum SQL {
-    CreateTable(CreateTable),
-    Insert(InsertValues),
-    Select(Select),
-    Flush,
-}
-
-fn parse_sql(str: TokenStreamRef) -> SQL {
-    match str.extract_identifier() {
-        "CREATE" => {
-            assert_eq!(str.extract_identifier(), "TABLE");
-            SQL::CreateTable(parse_create_table(str))
-        }
-        "INSERT" => {
-            assert_eq!(str.extract_identifier(), "INTO");
-            SQL::Insert(parse_insert_values(str))
-        }
-        "SELECT" => SQL::Select(parse_select(str)),
-        "FLUSH" => SQL::Flush,
-        _ => panic!(),
-    }
-}
-
-fn parse_lex_sql<'a, W: RWS>(
-    str: &str,
-    table: &'a mut NamedTables,
-    ps: &'a mut PageSerializer<W>,
-) -> Option<QueryData<'a, W>> {
-    let mut lexed = lex(str);
-    let parsed = parse_sql(&mut lexed);
-    match parsed {
-        SQL::Insert(iv) => {
-            table.execute_insert(iv, ps);
-            None
-        }
-        SQL::Select(se) => Some(table.execute_select(se, ps)),
-        SQL::CreateTable(cr) => {
-            table.insert_table(cr, ps);
-            None
-        }
-        SQL::Flush => {
-            ps.unload_all();
-            None
-        }
-    }
-}
-
-#[test]
-fn select() {
-    let mut ts = lex(r#"
-    SELECT col1, col2, col3 FROM tbl WHERE col1 EQUALS 5
-    "#);
-    dbg!(parse_sql(&mut ts));
-}
-
-#[test]
-fn create_table() {
-    let mut ts = lex(r#"CREATE TABLE tbl_name (
-        ID int,
-        filename STRING,
-        contents STRING
-        )
-    "#);
-    assert_eq!(
-        parse_sql(&mut ts),
-        SQL::CreateTable(CreateTable {
-            tbl_name: "tbl_name".to_string(),
-            fields: vec![
-                ("ID".to_string(), Type::Int),
-                ("filename".to_string(), Type::String),
-                ("contents".to_string(), Type::String),
-            ],
-        })
-    );
-}
-
-#[test]
-fn insert_values() {
-    let mut ts = lex(r#"INSERT INTO test VALUES (3, 4, 5), (4, 5, 6), ("hello", "world", 1, 2)"#);
-    assert_eq!(
-        parse_sql(&mut ts),
-        SQL::Insert(InsertValues {
-            values: vec![
-                vec![TypeData::Int(3), TypeData::Int(4), TypeData::Int(5)],
-                vec![TypeData::Int(4), TypeData::Int(5), TypeData::Int(6)],
-                vec![
-                    TypeData::String("hello".into()),
-                    TypeData::String("world".into()),
-                    TypeData::Int(1),
-                    TypeData::Int(2),
-                ],
-            ],
-            tbl_name: "test".to_string(),
-        })
-    );
-}
 
 #[test]
 fn test_index_type_table2() {
@@ -854,54 +305,54 @@ fn test_sql_all() {
     let mut ps = PageSerializer::create(Cursor::new(Vec::new()), Some(serializer::MAX_PAGE_SIZE));
     let mut nt = NamedTables::new(&mut ps);
 
-    parse_lex_sql(
+    parser::parse_lex_sql(
         "CREATE TABLE tbl (id INT, name STRING, telephone STRING)",
         &mut nt,
         &mut ps,
     );
-    parse_lex_sql(
+    parser::parse_lex_sql(
         r#"INSERT INTO tbl VALUES (3, "hello3 world", "30293204823")"#,
         &mut nt,
         &mut ps,
     );
-    parse_lex_sql(
+    parser::parse_lex_sql(
         r#"INSERT INTO tbl VALUES (4, "hello4 world", "3093204823")"#,
         &mut nt,
         &mut ps,
     );
-    parse_lex_sql(
+    parser::parse_lex_sql(
         r#"INSERT INTO tbl VALUES (5, "hello5 world", "3293204823")"#,
         &mut nt,
         &mut ps,
     );
-    parse_lex_sql(
+    parser::parse_lex_sql(
         "CREATE TABLE tbl1 (id INT, name STRING, fax INT)",
         &mut nt,
         &mut ps,
     );
-    parse_lex_sql(
+    parser::parse_lex_sql(
         r#"INSERT INTO tbl VALUES (6, "hello6 world", "0293204823")"#,
         &mut nt,
         &mut ps,
     );
-    parse_lex_sql(
+    parser::parse_lex_sql(
         r#"INSERT INTO tbl1 VALUES (7, "hello7 world", 293204823), (9, "hellfdsoa f", 3209324830294)"#,
         &mut nt,
         &mut ps,
     );
-    parse_lex_sql(
+    parser::parse_lex_sql(
         r#"INSERT INTO tbl1 VALUES (8, "hello8 world", 3209324830294)"#,
         &mut nt,
         &mut ps,
     );
-    let answer1 = parse_lex_sql(
+    let answer1 = parser::parse_lex_sql(
         r#"SELECT id, name, telephone FROM tbl WHERE id EQUALS 4"#,
         &mut nt,
         &mut ps,
     )
         .unwrap()
         .results();
-    let answer2 = parse_lex_sql(
+    let answer2 = parser::parse_lex_sql(
         r#"SELECT id, fax FROM tbl1 WHERE fax EQUALS 3209324830294 "#,
         &mut nt,
         &mut ps,
@@ -913,7 +364,7 @@ fn test_sql_all() {
     let mut ps = PageSerializer::create_from_reader(ps.move_file(), Some(serializer::MAX_PAGE_SIZE));
     let mut nt = NamedTables::new(&mut ps);
     assert_eq!(
-        parse_lex_sql(
+        parser::parse_lex_sql(
             r#"SELECT id, name, telephone FROM tbl WHERE id EQUALS 4 "#,
             &mut nt,
             &mut ps,
@@ -923,7 +374,7 @@ fn test_sql_all() {
         answer1
     );
     assert_eq!(
-        parse_lex_sql(
+        parser::parse_lex_sql(
             r#"SELECT id, fax FROM tbl1 WHERE fax EQUALS 3209324830294 "#,
             &mut nt,
             &mut ps,
@@ -938,6 +389,7 @@ fn test_sql_all() {
 fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
     use rand::seq::SliceRandom;
     use rand::thread_rng;
+    use crate::parser;
     ENVLOGGER.call_once(env_logger::init);
     let file = File::options()
         .truncate(true)
@@ -949,7 +401,7 @@ fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
     let mut ps = PageSerializer::create(file, Some(serializer::MAX_PAGE_SIZE));
     let mut nt = NamedTables::new(&mut ps);
 
-    parse_lex_sql(
+    parser::parse_lex_sql(
         "CREATE TABLE tbl (id INT, name STRING, telephone STRING)",
         &mut nt,
         &mut ps,
@@ -961,7 +413,7 @@ fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
     for _ in 0..10_000 {
         let j = *j.next().unwrap();
         let i = j + 10;
-        parse_lex_sql(
+        parser::parse_lex_sql(
             &format!(
                 r#"INSERT INTO tbl VALUES ({i}, "hello{i} world", "{i}"), ({j}, "hello{j} world", "{j}")"#
             ),
@@ -971,7 +423,7 @@ fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
     }
     for _ in 0..1000 {
         let j = *j.next().unwrap();
-        let res1 = parse_lex_sql(
+        let res1 = parser::parse_lex_sql(
             &format!("SELECT * FROM tbl WHERE id EQUALS {j}"),
             &mut nt,
             &mut ps,
@@ -986,6 +438,7 @@ fn test_selects(b: &mut test::Bencher) -> impl std::process::Termination {
 fn test_inserts() {
     use rand::seq::SliceRandom;
     use rand::SeedableRng;
+    use crate::parser;
     ENVLOGGER.call_once(env_logger::init);
     let mut a = rand_chacha::ChaCha20Rng::seed_from_u64(1);
     let file = File::options()
@@ -998,7 +451,7 @@ fn test_inserts() {
     let mut ps = PageSerializer::create(file, Some(serializer::MAX_PAGE_SIZE));
     let mut nt = NamedTables::new(&mut ps);
 
-    parse_lex_sql(
+    parser::parse_lex_sql(
         "CREATE TABLE tbl (id INT, name STRING, telephone STRING)",
         &mut nt,
         &mut ps,
@@ -1010,7 +463,7 @@ fn test_inserts() {
     for _ in 0..1_0000 {
         let j = j.next().unwrap();
         let i = j + 10;
-        parse_lex_sql(
+        parser::parse_lex_sql(
             &format!(
                 r#"INSERT INTO tbl VALUES ({i}, "hello{i} world", "{i}"), ({j}, "hello{j} world", "{j}")"#
             ),
@@ -1024,6 +477,8 @@ fn test_inserts() {
 fn lots_inserts() {
     use rand::seq::SliceRandom;
     use rand::SeedableRng;
+    use crate::parser;
+    use crate::parser::InsertValues;
     ENVLOGGER.call_once(env_logger::init);
     let mut a = rand_chacha::ChaCha20Rng::seed_from_u64(1);
     let file = File::options()
@@ -1036,7 +491,7 @@ fn lots_inserts() {
     let mut ps = PageSerializer::create(file, None);
     let mut nt = NamedTables::new(&mut ps);
 
-    parse_lex_sql(
+    parser::parse_lex_sql(
         "CREATE TABLE tbl (id INT, name STRING, telephone STRING, description STRING)",
         &mut nt,
         &mut ps,
@@ -1216,7 +671,7 @@ pub unsafe extern "C" fn sql_exec(
     let db = &mut *ptr;
     let query = CStr::from_ptr(query).to_string_lossy();
 
-    let result = parse_lex_sql(query.as_ref(), &mut db.table, &mut db.ps);
+    let result = parser::parse_lex_sql(query.as_ref(), &mut db.table, &mut db.ps);
     if let Some(x) = result {
         let x = x.results();
         let mut output_string = "[".to_string();

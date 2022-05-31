@@ -1,7 +1,8 @@
-use dynamic_tuple::{RWS, TupleBuilder, Type, TypeData};
+use dynamic_tuple::{RWS, TupleBuilder};
 use serializer::PageSerializer;
-use crate::dynamic_tuple::CreateTable;
+use crate::parser::CreateTable;
 use crate::named_tables::NamedTables;
+use crate::type_data::{Type, TypeData};
 use crate::typed_table::TypedTable;
 
 #[derive(Clone, Debug)]

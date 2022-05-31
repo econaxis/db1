@@ -52,3 +52,6 @@ mod ra_ops;
 mod secondary_index;
 mod typed_table;
 mod named_tables;
+mod table_cursor;
+mod type_data;
+mod parser;

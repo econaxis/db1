@@ -8,7 +8,7 @@ use chunk_header::{ChunkHeaderIndex, CHValue, MinKey};
 use table_base::read_to_buf;
 use table_base2::{TableBase2, TableType};
 use {ChunkHeader, FromReader};
-use dynamic_tuple::TypeData;
+use crate::type_data::TypeData;
 use ::{serializer, table_base2};
 
 #[derive(Debug)]
