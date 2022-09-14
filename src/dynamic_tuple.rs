@@ -33,7 +33,6 @@ pub struct DynamicTuple {
     pub(crate) fields: Vec<Type>,
 }
 
-// todo: TupleBuilder but without malloc -- just a schema for tuples
 #[derive(Default, Debug, PartialEq, Clone)]
 pub struct TupleBuilder {
     pub fields: Vec<TypeData>,
@@ -700,7 +699,6 @@ pub unsafe extern "C" fn sql_exec(
                         ))
                         .unwrap(),
                     TypeData::Null => {
-                        // TODO: write Null instead of Int(0). Need to fix also in the Python parser module.
                         output_string.write_fmt(format_args!("{}", 0)).unwrap()
                     }
                 };
@@ -754,7 +752,6 @@ impl<W: RWS> DynamicTable<W> {
 }
 
 // Dynamic tuples automatically take up 400 bytes
-// TODO: change TableBase2 insertion API to support `Write` interface to avoid malloc
 #[derive(Clone, Debug)]
 pub struct DynamicTupleInstance {
     pub data: [u8; 400],

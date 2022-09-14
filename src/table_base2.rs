@@ -158,7 +158,6 @@ impl TableBase2 {
             type_size: self.type_size as u32,
             tuple_count: 0,
             heap_size: self.heap.len() as u32,
-            // todo May 17: how to put limits when there's a variable length index tuple?
             limits: self.limits.clone(),
             compressed_size: 0,
             table_type: self.table_type,

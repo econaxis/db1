@@ -22,6 +22,10 @@ impl TypedTable {
         TableCursor::new(location_iter, ps, &self.ty, pkey, load_columns)
     }
 
+    fn append_secondary_index<W: RWS>(&mut self, ps: &mut PageSerializer<W>, on_column: u64) {
+
+    }
+
     pub(crate) fn store_raw(&self, t: TupleBuilder, ps: &mut PageSerializer<impl RWS>) {
         assert!(t.type_check(&self.ty));
         let max_page_len = ps.maximum_serialized_len();

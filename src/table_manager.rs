@@ -1,4 +1,3 @@
-// todo: compression, secondary indexes
 
 
 

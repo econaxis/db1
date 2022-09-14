@@ -1,5 +1,7 @@
 use std::cmp::Ordering;
 use std::io::{Read, Seek, Write};
+use ::{BytesSerialize, Db1String};
+use ::{FromReader, slice_from_type};
 
 impl Into<TypeData> for u64 {
     fn into(self) -> TypeData {

@@ -15,6 +15,10 @@ struct WhereByPkey<'a> {
     pkey: Option<TypeData>
 }
 
+/*
+TODO(where-by-index): implement where using a NestedLoopInnerJoin with a (WhereByPkey clause on the index) and a (Table)
+    - add `supports_pkey_search()` and optional `look_for(pkey)` to RANodeIterator trait.
+ */
 
 struct NestedLoopInnerJoin<'a, 'b, W: RWS> {
     left: &'a mut dyn RANodeIterator<W>,

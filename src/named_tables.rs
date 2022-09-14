@@ -3,6 +3,7 @@ use dynamic_tuple::{DynamicTuple, RWS, TupleBuilder};
 use crate::type_data::TypeData::Null;
 use query_data::QueryData;
 use ra_ops::RANodeIterator;
+use secondary_index::IndexDescriptor;
 use serializer::PageSerializer;
 use typed_table::TypedTable;
 use crate::parser::{CreateTable, Filter, InsertValues, Select};
@@ -19,9 +20,8 @@ struct SecondaryIndexSchemaInfo {
     on_column: u64,
 }
 
-pub(crate) struct NamedTables {
+pub struct NamedTables {
     pub tables: HashMap<String, TypedTable>,
-    pub other_structures: Vec<DbOtherObject>,
     largest_id: u64,
 }
 
@@ -35,21 +35,41 @@ impl NamedTables {
             - when adding a secondary index in code, also propagate those changes to the schema table
             - abstract schema table + table info table to a separate struct
      */
-    // pub fn init_secondary_indices(ps: &mut PageSerializer<impl RWS>) {
-    //     let indices_schema = TypedTable::new(
-    //         DynamicTuple {
-    //             fields: vec![
-    //                 Type::String, // table name that the index attaches to
-    //                 Type::String, // name of the index
-    //                 Type::Int,     // on column of table
-    //             ]
-    //         },INDEX_TABLE_ID, ps, vec!["table_name", "index_name", "on_column"]);
-    //
-    //     for tup in indices_schema.get_in_all_iter(None, )
-    //     }
-    // }
+    pub fn append_secondary_index(&self, ps: &mut PageSerializer<impl RWS>, idx: &IndexDescriptor, idx_id: u64, table_id: u64) {
+        // Sanity check -- idx.raw_table.id_ty is the same id_ty as idx_name
+
+        let index_schema = &self.tables["index_schema"];
+
+        let tb = TupleBuilder::default().add_int(table_id).add_int(idx_id).add_int(idx.on_column);
+        index_schema.store_raw(tb, ps);
+    }
+
+    pub fn init_secondary_indices(ps: &mut PageSerializer<impl RWS>, tables: &mut HashMap<String, TypedTable>) {
+        let indices_schema = TypedTable::new(
+            DynamicTuple {
+                fields: vec![
+                    Type::Int, // table ID that the index attaches to
+                    Type::Int, // table ID of the index
+                    Type::Int,     // on column of table
+                ]
+            },INDEX_TABLE_ID, ps, vec!["table_name", "index_name", "on_column"]);
+
+        let mut entry = tables.entry("index_schema".to_string()).insert_entry(indices_schema);
+        let indices_schema = entry.get_mut();
+        for mut tup in indices_schema.get_in_all_iter(None, u64::MAX, ps).collect(ps) {
+            let table_id = tup.extract_int(0);
+            let index_id = tup.extract_int(1);
+            let on_column = tup.extract_int(2);
+
+            let index_raw_table = tables.values().filter(|x| x.id_ty == index_id).next().unwrap().clone();
+
+            tables.values_mut().filter(|x| x.id_ty == table_id).next().unwrap().attached_indices.indices.push(IndexDescriptor {
+                on_column,
+                raw_table: index_raw_table
+            });
+        }
+    }
     pub(crate) fn new(s: &mut PageSerializer<impl RWS>) -> Self {
-        // Load schema table first
         /*
         TODO(table-schema): abstract schema table to separate class
             - use that class to persist `insert_table` code
@@ -91,6 +111,9 @@ impl NamedTables {
             large_id = large_id.max(id);
         }
 
+        Self::init_secondary_indices(s, &mut tables);
+
+
         Self {
             tables,
             largest_id: large_id,
@@ -104,12 +127,12 @@ impl NamedTables {
             fields: columns,
         }: CreateTable,
         ps: &mut PageSerializer<impl RWS>,
-    ) {
+    ) -> &TypedTable {
         self.largest_id += 1;
         let table_id = self.largest_id;
         // First insert to schema table
 
-        let schema_table = self.tables.get_mut("schema").unwrap();
+        let schema_table = self.tables.get("schema").unwrap();
 
         for (colname, col) in &columns {
             println!("Insert col {colname}");
@@ -124,12 +147,14 @@ impl NamedTables {
         let types = columns.iter().map(|a| a.1).collect();
         let names = columns.into_iter().map(|a| a.0).collect();
         self.tables.insert(
-            name,
+            name.clone(),
             TypedTable::new(DynamicTuple { fields: types }, table_id, ps, names),
         );
+
+        &self.tables[&name]
     }
 
-    fn execute_insert(&mut self, insert: InsertValues, ps: &mut PageSerializer<impl RWS>) {
+    pub(crate) fn execute_insert(&mut self, insert: InsertValues, ps: &mut PageSerializer<impl RWS>) {
         let table = self.tables.get_mut(&insert.tbl_name).unwrap();
         for t in insert.values {
             let tuple = TupleBuilder { fields: t };
@@ -155,7 +180,7 @@ impl NamedTables {
         mask
     }
 
-    fn execute_select<'a, W: RWS>(
+    pub(crate) fn execute_select<'a, W: RWS>(
         &mut self,
         select: Select,
         ps: &'a mut PageSerializer<W>,
@@ -165,7 +190,6 @@ impl NamedTables {
 
         let filter = select.filter;
 
-        // TODO: only supports the first filter condition for now
         let results: Vec<_> = match filter.first() {
             Some(Filter::Equals(colname, TypeData::Int(icomp))) => {
                 match table.column_map[colname] {
