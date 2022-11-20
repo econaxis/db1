@@ -18,7 +18,7 @@ use FromReader;
 use serializer;
 use crate::type_data::{Type, TypeData};
 
-#[derive(PartialEq, Debug, Copy, Clone)]
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum TableType {
     Data,
     Index(Type),
@@ -489,7 +489,7 @@ fn bp_works() {
 
 #[test]
 fn duplicate_pkeys_works() {
-    let mut ps = PageSerializer::default();
+    let _ps = PageSerializer::default();
 
     let mut table = TableBase2::new(1, Db1String::TYPE_SIZE as usize * 2 + 8, TableType::Data);
     let dyn = DynamicTuple::new(vec![Type::Int, Type::String, Type::String]);

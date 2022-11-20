@@ -21,7 +21,7 @@ impl SuitableDataType for IndexKey {}
 impl BytesSerialize for IndexKey {}
 
 from_reader!(IndexKey);
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct HashDb {
     hash: HashMap<u64, IndexKey>,
 }

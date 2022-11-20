@@ -1,4 +1,7 @@
+use std::fmt::format;
 use std::io::Cursor;
+use rand::prelude::SliceRandom;
+use rand::thread_rng;
 use dynamic_tuple::{DynamicTuple, RWS, TupleBuilder};
 use serializer::PageSerializer;
 use crate::type_data::{Type, TypeData};
@@ -11,7 +14,7 @@ struct Where<'a, W: RWS> {
 }
 
 struct WhereByPkey<'a> {
-    source: &'a mut TypedTable,
+    source: &'a TypedTable,
     pkey: Option<TypeData>
 }
 
@@ -105,7 +108,7 @@ fn where_by_pkey() {
 
 #[test]
 fn test_where_operator() {
-    let (mut ps, mut tt) = init_test_table();
+    let (mut ps, tt) = init_test_table();
     let mut it = tt.get_in_all_iter(None, u64::MAX,&mut ps);
     let mut whereclause = Where::<Cursor<Vec<u8>>> {
         source: &mut it,
@@ -116,7 +119,7 @@ fn test_where_operator() {
             number % 3 == 0
         },
     };
-    let whereclause2 = Where {
+    let _whereclause2 = Where {
         source: &mut whereclause,
         condition: |a: &TupleBuilder| -> bool {
             let str = a.extract_string(2);
@@ -129,7 +132,7 @@ fn test_where_operator() {
 
 #[test]
 fn nested_loop() {
-    let (mut ps, mut tt) = init_test_table();
+    let (mut ps, tt) = init_test_table();
 
     let tt1 = TypedTable::new(DynamicTuple::new(vec![Type::Int, Type::String]), 11, &mut ps, vec!["id", "content"]);
 
@@ -147,6 +150,26 @@ fn nested_loop() {
 
     dbg!(nl.collect(&mut ps));
 }
+
+#[test]
+fn where_by_pkey_string() {
+    let (mut ps, mut tt) = init_string_table(5000);
+
+    let mut range: Vec<_> = (0..5000).collect();
+    range.shuffle(&mut thread_rng());
+
+    for i in range {
+        let key = format!("hello{i}");
+        let value = format!("world{i}");
+        let mut wpkey = WhereByPkey {
+            source: & tt,
+            pkey: Some(TypeData::String(key.clone().into()))
+        };
+        assert_eq!(wpkey.collect(&mut ps), vec![TupleBuilder::default().add_string(key).add_string(value)]);
+
+    }
+}
+
 fn init_test_table() -> (PageSerializer<Cursor<Vec<u8>>>, TypedTable) {
     let mut ps = PageSerializer::default();
     let tt = TypedTable::new(
@@ -166,3 +189,24 @@ fn init_test_table() -> (PageSerializer<Cursor<Vec<u8>>>, TypedTable) {
     }
     (ps, tt)
 }
+fn init_string_table(min_rows: i32) -> (PageSerializer<Cursor<Vec<u8>>>, TypedTable) {
+    let mut ps = PageSerializer::default();
+    let tt = TypedTable::new(
+        DynamicTuple::new(vec![Type::String, Type::String]),
+        10,
+        &mut ps,
+        vec!["name", "content"],
+    );
+    let mut i = 0;
+
+    while ps.get_in_all(tt.id_ty, None).len() < 4 || i <= min_rows {
+        let tb = TupleBuilder::default()
+            .add_string(format!("hello{i}"))
+            .add_string(format!("world{i}"));
+        tt.store_raw(tb, &mut ps);
+        i += 1;
+    }
+    (ps, tt)
+}
+
+

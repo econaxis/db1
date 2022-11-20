@@ -5,7 +5,7 @@ use query_data::QueryData;
 use serializer::PageSerializer;
 use type_data::{Type, TypeData};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct CreateTable {
     pub tbl_name: String,
     pub fields: Vec<(String, Type)>,
@@ -51,7 +51,7 @@ impl<'a> TokenStream<'a> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct InsertValues {
     pub values: Vec<Vec<TypeData>>,
     pub tbl_name: String,
@@ -192,12 +192,12 @@ fn lex(str: &str) -> TokenStream {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Filter {
     Equals(String, TypeData),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Select {
     pub tbl_name: String,
     pub columns: Vec<String>,

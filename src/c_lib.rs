@@ -61,3 +61,4 @@ pub use typed_table::TypedTable;
 pub use dynamic_tuple::*;
 pub use type_data::*;
 pub use named_tables::*;
+pub use table_base2::TableType;

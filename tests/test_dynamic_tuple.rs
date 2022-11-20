@@ -6,19 +6,47 @@ use std::ffi::{c_char, CStr, CString};
 use std::fs::File;
 use std::io::Cursor;
 use rand::prelude::SliceRandom;
-use rand::{SeedableRng, thread_rng};
+use rand::{Rng, SeedableRng, thread_rng};
 use db2::{dynamic_tuple, DynamicTuple, MAX_PAGE_SIZE, NamedTables, PageSerializer, parser, TupleBuilder, Type, TypeData, TypedTable};
 use db2::parser::{CreateTable, Filter, InsertValues, Select};
+
+mod test_serializer;
 
 #[test]
 fn test_index_type_table2() {
     let mut ps = PageSerializer::default();
-    let mut tt = TypedTable::new(DynamicTuple::new(vec![Type::String, Type::String]), 10, &mut ps, vec!["a", "b"]);
+    let tt = TypedTable::new(DynamicTuple::new(vec![Type::String, Type::String]), 10, &mut ps, vec!["a", "b"]);
 
     for i in 0..11_100u64 {
         let ty = TupleBuilder::default().add_string(i.to_string()).add_string((i * 10000).to_string());
         tt.store_raw(ty, &mut ps);
     }
+}
+
+#[test]
+fn test_string_as_primary_keys() {
+    use rand::thread_rng;
+    let mut ps = PageSerializer::default();
+    let tt = TypedTable::new(DynamicTuple::new(vec![Type::String, Type::String]), 10,  &mut ps,vec!["a", "b"]);
+
+    for i in 0..3000 {
+        let ty = TupleBuilder::default().add_string(i.to_string()).add_string((i * 10000).to_string());
+        tt.store_raw(ty, &mut ps);
+
+        for _ in 0..20 {
+            if i == 0 {
+                continue;
+            }
+
+            let search = thread_rng().gen_range(0..i);
+            let key = search.to_string();
+            let value = (search * 10000).to_string();
+            let results = tt.get_in_all_iter(Some(TypeData::String(key.clone().into())), u64::MAX, &mut ps).collect(&mut ps);
+
+            assert_eq!(results, vec![TupleBuilder::default().add_string(key).add_string(value)])
+        }
+    }
+
 }
 
 #[test]
@@ -42,10 +70,10 @@ fn typed_table_cursors() {
     }
     // Now test the iterator API
     let mut result1 = tt.get_in_all_iter(None, u64::MAX, &mut ps);
-    let mut result1: Vec<_> = result1.collect(&mut ps);
+    let result1: Vec<_> = result1.collect(&mut ps);
 
     let mut cursor = tt.get_in_all_iter(None, u64::MAX, &mut ps);
-    let mut cursor: Vec<_> = cursor.collect(&mut ps);
+    let cursor: Vec<_> = cursor.collect(&mut ps);
     assert_eq!(result1, cursor);
 }
 
@@ -331,7 +359,7 @@ fn lots_inserts() {
     for j in indices {
         let i = j + 10;
         let insert = InsertValues {
-            values: vec![vec![TypeData::Int(i), TypeData::String(format!("hello{i} world").into()), TypeData::String(format!("{i}").into()), TypeData::String(format!("{desc_string}").into())]],
+            values: vec![vec![TypeData::Int(i), TypeData::String(format!("hello{i} world").into()), TypeData::String(format!("{i}").into()), TypeData::String(desc_string.to_string().into())]],
             tbl_name: "tbl".to_string(),
         };
         nt.execute_insert(insert, &mut ps);

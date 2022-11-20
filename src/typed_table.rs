@@ -23,7 +23,7 @@ impl TypedTable {
     }
 
     fn append_secondary_index<W: RWS>(&mut self, _ps: &mut PageSerializer<W>, _on_column: u64) {
-
+        todo!()
     }
 
     pub fn store_raw(&self, t: TupleBuilder, ps: &mut PageSerializer<impl RWS>) {

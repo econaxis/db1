@@ -37,7 +37,7 @@ impl BytesSerialize for ChunkHeader {
 
 // Describes a chunk of tuples, such as min/max ranges (for binary searches), size of the tuple, and how many tuples
 // Will be serialized along with the data itself for quicker searches.
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 #[repr(C)]
 pub struct ChunkHeader {
     pub ty: u64,
@@ -119,7 +119,7 @@ impl ChunkHeader {
 }
 
 // Represents a collection of ChunkHeaders, along with their location in a file for latter searches
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct CHValue {
     pub ch: ChunkHeader,
     pub location: u64,
@@ -170,7 +170,7 @@ impl MinKey {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ChunkHeaderIndex(pub BTreeMap<MinKey, CHValue>);
 
 impl Default for ChunkHeaderIndex {
@@ -190,6 +190,8 @@ impl ChunkHeaderIndex {
         location
     }
 
+    /// Get all the candidate pages that may contain this primary key.
+    /// TODO: extend function to get all candidate pages that contain a range of primary key.
     pub fn get_in_one_it<'a>(&'a self, ty: u64, pkey: Option<TypeData>) -> impl DoubleEndedIterator<Item=(&'a MinKey, &'a CHValue)> {
         if let Some(pkey) = pkey {
             let mk = MinKey::new(ty, pkey);
