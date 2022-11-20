@@ -6,9 +6,9 @@ use serializer::PageSerializer;
 use type_data::{Type, TypeData};
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct CreateTable {
-    pub(crate) tbl_name: String,
-    pub(crate) fields: Vec<(String, Type)>,
+pub struct CreateTable {
+    pub tbl_name: String,
+    pub fields: Vec<(String, Type)>,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -52,9 +52,9 @@ impl<'a> TokenStream<'a> {
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct InsertValues {
-    pub(crate) values: Vec<Vec<TypeData>>,
-    pub(crate) tbl_name: String,
+pub struct InsertValues {
+    pub values: Vec<Vec<TypeData>>,
+    pub tbl_name: String,
 }
 
 type TokenStreamRef<'a, 'b> = &'a TokenStream<'b>;
@@ -193,15 +193,15 @@ fn lex(str: &str) -> TokenStream {
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum Filter {
+pub enum Filter {
     Equals(String, TypeData),
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct Select {
-    pub(crate) tbl_name: String,
-    pub(crate) columns: Vec<String>,
-    pub(crate) filter: Vec<Filter>,
+pub struct Select {
+    pub tbl_name: String,
+    pub columns: Vec<String>,
+    pub filter: Vec<Filter>,
 }
 
 fn parse_comma_delimited_list<'a, 'b, T: 'b, F: Fn(TokenStreamRef<'a, 'b>) -> T>(

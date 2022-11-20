@@ -3,13 +3,13 @@ use ra_ops::RANodeIterator;
 use serializer::PageSerializer;
 use crate::parser::CreateTable;
 use crate::named_tables::NamedTables;
-use crate::type_data::{Type, TypeData};
+use crate::type_data::{TypeData};
 use crate::typed_table::TypedTable;
 
 #[derive(Clone, Debug)]
 pub struct IndexDescriptor {
-    pub(crate) on_column: u64,
-    pub(crate) raw_table: TypedTable,
+    pub on_column: u64,
+    pub raw_table: TypedTable,
 }
 
 

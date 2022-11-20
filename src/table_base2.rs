@@ -25,14 +25,14 @@ pub enum TableType {
 }
 
 impl TableType {
-    pub(crate) fn to_u8(&self) -> u8 {
+    pub fn to_u8(&self) -> u8 {
         match self {
             TableType::Data => 0,
             TableType::Index(Type::Int) => 1,
             TableType::Index(Type::String) => 2
         }
     }
-    pub(crate) fn from_u8(a: u8) -> Self {
+    pub fn from_u8(a: u8) -> Self {
         match a {
             0 => TableType::Data,
             1 => TableType::Index(Type::Int),

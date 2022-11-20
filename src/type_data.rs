@@ -11,7 +11,8 @@ impl Into<TypeData> for u64 {
 
 impl PartialOrd for TypeData {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        let result = match (self, other) {
+        
+        match (self, other) {
             (TypeData::Int(x), TypeData::Int(y)) => x.partial_cmp(y),
             (TypeData::String(x), TypeData::String(y)) => x.partial_cmp(y),
             (TypeData::Null, TypeData::Null) => Some(Ordering::Equal),
@@ -20,12 +21,11 @@ impl PartialOrd for TypeData {
             (TypeData::Int(u64::MAX), _) => Some(Ordering::Greater),
             (_, TypeData::Int(u64::MAX)) => Some(Ordering::Less),
             _ => panic!("Invalid comparison between {:?} {:?}", self, other)
-        };
-        result
+        }
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Type {
     Int = 1,
     String = 2,

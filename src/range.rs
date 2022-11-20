@@ -48,10 +48,10 @@ impl BytesSerialize for Range<u64> {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Range<T> {
-    pub(crate) min: Option<T>,
-    pub(crate) max: Option<T>,
+    pub min: Option<T>,
+    pub max: Option<T>,
 }
 
 impl<T> Default for Range<T> {

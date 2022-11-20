@@ -9,11 +9,11 @@ use crate::type_data::{Type, TypeData};
 
 #[derive(Clone, Debug)]
 pub struct TypedTable {
-    pub(crate) ty: DynamicTuple,
-    pub(crate) id_ty: u64,
-    pub(crate) column_map: HashMap<String, u32>,
+    pub ty: DynamicTuple,
+    pub id_ty: u64,
+    pub column_map: HashMap<String, u32>,
     /* TODO(index-on-insert): run inserts through secondary indices */
-    pub(crate) attached_indices: SecondaryIndices,
+    pub attached_indices: SecondaryIndices,
 }
 
 impl TypedTable {
@@ -22,11 +22,11 @@ impl TypedTable {
         TableCursor::new(location_iter, ps, &self.ty, pkey, load_columns)
     }
 
-    fn append_secondary_index<W: RWS>(&mut self, ps: &mut PageSerializer<W>, on_column: u64) {
+    fn append_secondary_index<W: RWS>(&mut self, _ps: &mut PageSerializer<W>, _on_column: u64) {
 
     }
 
-    pub(crate) fn store_raw(&self, t: TupleBuilder, ps: &mut PageSerializer<impl RWS>) {
+    pub fn store_raw(&self, t: TupleBuilder, ps: &mut PageSerializer<impl RWS>) {
         assert!(t.type_check(&self.ty));
         let max_page_len = ps.maximum_serialized_len();
         let pkey = t.first_v2().clone();
@@ -72,7 +72,7 @@ impl TypedTable {
     }
 
 
-    pub(crate) fn new<W: Write + Read + Seek>(
+    pub fn new<W: Write + Read + Seek>(
         ty: DynamicTuple,
         id: u64,
         _ps: &mut PageSerializer<W>,

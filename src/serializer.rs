@@ -9,7 +9,8 @@ use table_base::read_to_buf;
 use table_base2::{TableBase2, TableType};
 use {ChunkHeader, FromReader};
 use crate::type_data::TypeData;
-use ::{serializer, table_base2};
+use ::{serializer};
+use table_base2;
 
 #[derive(Debug)]
 pub struct PageSerializer<W: Read + Write + Seek> {
@@ -30,7 +31,7 @@ impl Default for PageSerializer<Cursor<Vec<u8>>> {
 pub struct LimitedReader<W>(W, usize);
 
 impl<W> LimitedReader<W> {
-    pub(crate) fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.1
     }
     pub fn new(w: W, size: usize) -> LimitedReader<W> {
@@ -72,7 +73,7 @@ impl<'a, W> Debug for PageResult<'a, W> {
     }
 }
 
-pub(crate) const MAX_PAGE_SIZE: u64 = 16000;
+pub const MAX_PAGE_SIZE: u64 = 16000;
 
 impl<W: Write + Read + Seek> PageSerializer<W> {
     const CHECK_SEQ: u64 = 3180343028731803290;

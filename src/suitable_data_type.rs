@@ -28,7 +28,7 @@ impl Debug for DataType {
 }
 
 impl DataType {
-    pub(crate) fn first(&self) -> u64 {
+    pub fn first(&self) -> u64 {
         self.0 as u64
     }
 }

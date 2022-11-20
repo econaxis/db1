@@ -14,7 +14,7 @@ pub struct TableCursor<'a> {
 }
 
 impl<'a> TableCursor<'a> {
-    pub(crate) fn new< W: RWS>(locations: Vec<u64>, ps: & mut PageSerializer<W>, ty: &'a DynamicTuple, pkey: Option<TypeData>, load_columns: u64) -> Self {
+    pub fn new< W: RWS>(locations: Vec<u64>, ps: & mut PageSerializer<W>, ty: &'a DynamicTuple, pkey: Option<TypeData>, load_columns: u64) -> Self {
         let mut se = Self {
             locations,
             ty,

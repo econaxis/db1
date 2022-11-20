@@ -9,10 +9,10 @@ use crate::{
     SuitableDataType,
 };
 
-#[derive(Clone, Debug, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct IndexKey {
-    pub(crate) hash: u64,
-    pub(crate) pointer: u64,
+    pub hash: u64,
+    pub pointer: u64,
 }
 
 gen_suitable_data_type_impls!(IndexKey);
@@ -58,7 +58,7 @@ impl Seek for InvalidWriter {
     }
 }
 
-pub(crate) fn hash<T: Hash>(t: &T) -> u64 {
+pub fn hash<T: Hash>(t: &T) -> u64 {
     let mut hasher = DefaultHasher::new();
     t.hash(&mut hasher);
     hasher.finish()

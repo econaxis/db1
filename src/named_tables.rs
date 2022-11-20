@@ -56,20 +56,20 @@ impl NamedTables {
 
         let mut entry = tables.entry("index_schema".to_string()).insert_entry(indices_schema);
         let indices_schema = entry.get_mut();
-        for mut tup in indices_schema.get_in_all_iter(None, u64::MAX, ps).collect(ps) {
+        for tup in indices_schema.get_in_all_iter(None, u64::MAX, ps).collect(ps) {
             let table_id = tup.extract_int(0);
             let index_id = tup.extract_int(1);
             let on_column = tup.extract_int(2);
 
-            let index_raw_table = tables.values().filter(|x| x.id_ty == index_id).next().unwrap().clone();
+            let index_raw_table = tables.values().find(|x| x.id_ty == index_id).unwrap().clone();
 
-            tables.values_mut().filter(|x| x.id_ty == table_id).next().unwrap().attached_indices.indices.push(IndexDescriptor {
+            tables.values_mut().find(|x| x.id_ty == table_id).unwrap().attached_indices.indices.push(IndexDescriptor {
                 on_column,
                 raw_table: index_raw_table
             });
         }
     }
-    pub(crate) fn new(s: &mut PageSerializer<impl RWS>) -> Self {
+    pub fn new(s: &mut PageSerializer<impl RWS>) -> Self {
         /*
         TODO(table-schema): abstract schema table to separate class
             - use that class to persist `insert_table` code
@@ -120,7 +120,7 @@ impl NamedTables {
         }
     }
 
-    pub(crate) fn insert_table(
+    pub fn insert_table(
         &mut self,
         CreateTable {
             tbl_name: name,
@@ -154,7 +154,7 @@ impl NamedTables {
         &self.tables[&name]
     }
 
-    pub(crate) fn execute_insert(&mut self, insert: InsertValues, ps: &mut PageSerializer<impl RWS>) {
+    pub fn execute_insert(&mut self, insert: InsertValues, ps: &mut PageSerializer<impl RWS>) {
         let table = self.tables.get_mut(&insert.tbl_name).unwrap();
         for t in insert.values {
             let tuple = TupleBuilder { fields: t };
@@ -180,7 +180,7 @@ impl NamedTables {
         mask
     }
 
-    pub(crate) fn execute_select<'a, W: RWS>(
+    pub fn execute_select<'a, W: RWS>(
         &mut self,
         select: Select,
         ps: &'a mut PageSerializer<W>,
@@ -195,27 +195,27 @@ impl NamedTables {
                 match table.column_map[colname] {
                     0 => table.get_in_all_iter(Some(TypeData::Int(*icomp)), col_mask, ps).collect(ps),
                     colindex => {
-                        todo!()
-                        // println!("Warning: using inefficient table scan");
-                        // let query_result = table.get_in_all_iter(None, col_mask, ps);
-                        //
-                        // query_result.filter(|i| match i.fields[colindex as usize] {
-                        //     TypeData::Int(int) => int == *icomp,
-                        //     _ => panic!(),
-                        // }).collect()
+                        println!("Warning: using inefficient table scan");
+                        let mut query_result = table.get_in_all_iter(None, col_mask, ps);
+
+                        let data = query_result.collect(ps);
+                        data.into_iter().filter(|i| match i.fields[colindex as usize] {
+                            TypeData::Int(int) => int == *icomp,
+                            _ => panic!(),
+                        }).collect()
                     }
                 }
             }
             Some(Filter::Equals(colname, TypeData::String(s))) => {
-                todo!()
-                // println!("Warning: using inefficient table scan");
-                //
-                // let colindex = table.column_map[colname];
-                // let qr = table.get_in_all_iter(None, col_mask, ps);
-                // qr.filter(|i| match &i.fields[colindex as usize] {
-                //     TypeData::String(s1) => s1 == s,
-                //     _ => panic!(),
-                // }).collect()
+                println!("Warning: using inefficient table scan");
+
+                let colindex = table.column_map[colname];
+                let mut qr = table.get_in_all_iter(None, col_mask, ps);
+                let qr = qr.collect(ps);
+                qr.into_iter().filter(|i| match &i.fields[colindex as usize] {
+                    TypeData::String(s1) => s1 == s,
+                    _ => panic!(),
+                }).collect()
             }
             None | Some(Filter::Equals(_, Null)) => table.get_in_all_iter(None, col_mask, ps).collect(ps),
         };

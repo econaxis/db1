@@ -50,7 +50,7 @@ impl<'a, 'b, W: RWS> RANodeIterator<W> for NestedLoopInnerJoin<'a, 'b, W>{
     }
 }
 
-pub(crate) trait RANodeIterator<W: RWS> {
+pub trait RANodeIterator<W: RWS> {
     fn next(&mut self, ps: &mut PageSerializer<W>) -> Option<TupleBuilder>;
     fn collect(&mut self, ps: &mut PageSerializer<W>) -> Vec<TupleBuilder> {
         let mut vec = Vec::new();

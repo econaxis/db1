@@ -103,7 +103,7 @@ impl FromReader for Option<ChunkHeader> {
 
 impl ChunkHeader {
     pub const MAXTYPESIZE: u64 = 60;
-    pub(crate) fn compressed(&self) -> bool {
+    pub fn compressed(&self) -> bool {
         self.compressed_size > 0
     }
     pub fn calculate_total_size(&self) -> usize {

@@ -11,8 +11,6 @@ rand = {version = "*", features = ["std", "std_rng"]}
 rand_chacha = "0.3.1"
 superslice = "*"
 
-[dev-dependencies]
-
 [profile.release]
 debug = true
 opt-level = 3
@@ -25,7 +23,7 @@ debug = 1
 [lib]
 path="src/c_lib.rs"
 name = "db2"
-crate-type = ["cdylib"]
+#crate-type = ["cdylib"]
 
 
 [workspace]
