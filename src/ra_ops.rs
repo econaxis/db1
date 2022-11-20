@@ -92,7 +92,7 @@ impl<'a, W: RWS> RANodeIterator<W> for Where<'a, W> {
 
 #[test]
 fn where_by_pkey() {
-    let (mut ps, mut tt) = init_test_table();
+    let (mut ps, mut tt) = init_test_table(1000);
     let mut where_by_pkey = WhereByPkey {
         source: &mut tt,
         pkey: Some(TypeData::Int(300))
@@ -108,7 +108,7 @@ fn where_by_pkey() {
 
 #[test]
 fn test_where_operator() {
-    let (mut ps, tt) = init_test_table();
+    let (mut ps, tt) = init_test_table(1000);
     let mut it = tt.get_in_all_iter(None, u64::MAX,&mut ps);
     let mut whereclause = Where::<Cursor<Vec<u8>>> {
         source: &mut it,
@@ -132,14 +132,16 @@ fn test_where_operator() {
 
 #[test]
 fn nested_loop() {
-    let (mut ps, tt) = init_test_table();
+    let (mut ps, tt) = init_test_table(1000);
 
     let tt1 = TypedTable::new(DynamicTuple::new(vec![Type::Int, Type::String]), 11, &mut ps, vec!["id", "content"]);
 
-    for i in 0..2000 {
-        tt1.store_raw(TupleBuilder::default().add_int(i).add_string(format!("hello{}", i * 13)), &mut ps);
+    for i in 0..200 {
+        tt1.store_raw(TupleBuilder::default().add_int(i).add_string(format!("hello{}", i * 10)), &mut ps);
     }
-
+    // TT is i, hello{i}, world{i}.
+    // TT1 is i, hello{i * 10}
+    // So the join result should be: i, hello{i}, world{i}, i, hello{i*10}
     let mut nl = NestedLoopInnerJoin {
         left: &mut tt.get_in_all_iter(None, u64::MAX, &mut ps),
         right: &mut tt1.get_in_all_iter(None, u64::MAX, &mut ps),
@@ -148,7 +150,14 @@ fn nested_loop() {
         result: None
     };
 
-    dbg!(nl.collect(&mut ps));
+    let mut count = 0;
+    while let Some(tuple) = nl.next(&mut ps) {
+        let i = tuple.extract_int(0);
+        let answer = TupleBuilder::default().add_int(i).add_string(format!("hello{i}")).add_string(format!("world{i}")).add_int(i).add_string(format!("hello{}", i * 10));
+        assert_eq!(tuple, answer);
+        count += 1;
+    }
+    assert_eq!(count, 200);
 }
 
 #[test]
@@ -162,15 +171,14 @@ fn where_by_pkey_string() {
         let key = format!("hello{i}");
         let value = format!("world{i}");
         let mut wpkey = WhereByPkey {
-            source: & tt,
+            source: &tt,
             pkey: Some(TypeData::String(key.clone().into()))
         };
         assert_eq!(wpkey.collect(&mut ps), vec![TupleBuilder::default().add_string(key).add_string(value)]);
-
     }
 }
 
-fn init_test_table() -> (PageSerializer<Cursor<Vec<u8>>>, TypedTable) {
+fn init_test_table(min_rows: u64) -> (PageSerializer<Cursor<Vec<u8>>>, TypedTable) {
     let mut ps = PageSerializer::default();
     let tt = TypedTable::new(
         DynamicTuple::new(vec![Type::Int, Type::String, Type::String]),
@@ -179,13 +187,13 @@ fn init_test_table() -> (PageSerializer<Cursor<Vec<u8>>>, TypedTable) {
         vec!["id", "name", "content"],
     );
     let mut i = 0;
-    while ps.get_in_all(tt.id_ty, None).len() < 4 {
-        i += 1;
+    while ps.get_in_all(tt.id_ty, None).len() < 4 || i <= min_rows {
         let tb = TupleBuilder::default()
             .add_int(i)
             .add_string(format!("hello{i}"))
             .add_string(format!("world{i}"));
         tt.store_raw(tb, &mut ps);
+        i += 1;
     }
     (ps, tt)
 }
